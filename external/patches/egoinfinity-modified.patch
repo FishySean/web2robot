@@ -1,0 +1,473 @@
+diff --git a/retarget/kinematics/wilor_retargeter.py b/retarget/kinematics/wilor_retargeter.py
+index b54579d..1eacf45 100644
+--- a/retarget/kinematics/wilor_retargeter.py
++++ b/retarget/kinematics/wilor_retargeter.py
+@@ -380,8 +380,40 @@ def _r2_18dof_from_keypoints(side: str) -> RobotHandConfig:
+     ])
+ 
+ 
+-# ── per-robot factory ─────────────────────────────────────────────────────────
++def _m7_12dof_from_keypoints(side: str) -> RobotHandConfig:
++    """RobotEra M7 5-finger hand: 12 DoF per hand.
++
++    Unlike G1, M7's left- and right-hand finger flex joints share IDENTICAL,
++    positive ranges (0..1.919 for curls), so flex scale is +1.0 on BOTH sides
++    (no per-side sign flip needed).  MANO bend angles are ≥0 (straight=0,
++    curled≈π), which matches the positive close direction.
+ 
++    robot_name values are short keys; sim/robots/m7/env.py re-attaches the side
++    prefix and maps them to the real MJCF joint names (hand_thumb_bend_joint,
++    hand_index_joint1, hand_mid_joint1, ...).
++    """
++    return RobotHandConfig(joints=[
++        # ── thumb: bend (opposition) + two curl joints ────────────────────────
++        JointMapping("thumb_bend",  12, "flex", scale=1.0, limit=(0.0,    1.832)),
++        JointMapping("thumb_rota1", 13, "flex", scale=1.0, limit=(-0.698, 1.745)),
++        JointMapping("thumb_rota2", 14, "flex", scale=1.0, limit=(0.0,    1.919)),
++        # ── index: abduction (spread) + MCP + PIP ─────────────────────────────
++        JointMapping("index_abd",    0, "abd",  scale=0.5, limit=(-0.174, 0.174), left_sign=-1.0),
++        JointMapping("index_mcp",    0, "flex", scale=1.0, limit=(0.0,    1.919)),
++        JointMapping("index_pip",    1, "flex", scale=1.0, limit=(0.0,    1.919)),
++        # ── middle: MCP + PIP ─────────────────────────────────────────────────
++        JointMapping("middle_mcp",   3, "flex", scale=1.0, limit=(0.0,    1.919)),
++        JointMapping("middle_pip",   4, "flex", scale=1.0, limit=(0.0,    1.919)),
++        # ── ring: MCP + PIP ───────────────────────────────────────────────────
++        JointMapping("ring_mcp",     9, "flex", scale=1.0, limit=(0.0,    1.919)),
++        JointMapping("ring_pip",    10, "flex", scale=1.0, limit=(0.0,    1.919)),
++        # ── pinky: MCP + PIP ──────────────────────────────────────────────────
++        JointMapping("pinky_mcp",    6, "flex", scale=1.0, limit=(0.0,    1.919)),
++        JointMapping("pinky_pip",    7, "flex", scale=1.0, limit=(0.0,    1.919)),
++    ])
++
++
++# ── per-robot factory ─────────────────────────────────────────────────────────
+ def get_wilor_hand_retargeter(
+     robot: str,
+     side:  str,
+@@ -406,5 +438,8 @@ def get_wilor_hand_retargeter(
+     if robot == "xlerobot":
+         return WilorHandRetargeter(_xlerobot_jaw_from_keypoints(side), side)
+ 
++    if robot == "m7":
++        return WilorHandRetargeter(_m7_12dof_from_keypoints(side), side)
++
+     raise ValueError(f"Unknown robot '{robot}'. "
+                      f"Add it to wilor_retargeter.py or to _ROBOTS_WITHOUT_HANDS.")
+diff --git a/retarget/kinematics/wrist_ik.py b/retarget/kinematics/wrist_ik.py
+index 2d8dc8c..fee4daa 100644
+--- a/retarget/kinematics/wrist_ik.py
++++ b/retarget/kinematics/wrist_ik.py
+@@ -182,6 +182,44 @@ class RobotIKConfig:
+             joint_limits   = _limits[side],
+         )
+ 
++    @staticmethod
++    def m7(side: str) -> "RobotIKConfig":
++        """RobotEra M7 humanoid — one 7-DoF arm.
++
++        Chain root = waist_pitch_link (the tree ancestor shared by both arms;
++        torso_frame is a coincident leaf and cannot be a serial-chain root).
++        The 7 joints between waist_pitch_link and <side>_hand_frame are:
++        shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch, elbow_yaw,
++        wrist_pitch, wrist_roll.
++        """
++        _limits = {
++            "left": torch.tensor([
++                [-2.79,  2.79],   # shoulder_pitch
++                [-0.56,  2.53],   # shoulder_roll
++                [-4.36,  1.22],   # arm_yaw
++                [-2.36,  0.70],   # elbow_pitch
++                [-2.79,  2.79],   # elbow_yaw
++                [-0.79,  0.79],   # wrist_pitch
++                [-1.57,  1.57],   # wrist_roll
++            ]),
++            "right": torch.tensor([
++                [-2.79,  2.79],   # shoulder_pitch
++                [-2.53,  0.56],   # shoulder_roll
++                [-1.22,  4.36],   # arm_yaw
++                [-2.36,  0.70],   # elbow_pitch
++                [-2.79,  2.79],   # elbow_yaw
++                [-0.79,  0.79],   # wrist_pitch
++                [-1.57,  1.57],   # wrist_roll
++            ]),
++        }
++        _ee = {"left": "left_hand_frame", "right": "right_hand_frame"}
++        return RobotIKConfig(
++            mjcf_path      = _ROBOTS_DIR / "m7" / "m7.xml",
++            end_link_name  = _ee[side],
++            root_link_name = "waist_pitch_link",
++            joint_limits   = _limits[side],
++        )
++
+     @staticmethod
+     def xlerobot(side: str) -> "RobotIKConfig":
+         """XLeRobot 5-DoF SO-ARM100 arm (Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll)."""
+diff --git a/retarget/scripts/test.py b/retarget/scripts/test.py
+index f8f1b5f..418436b 100644
+--- a/retarget/scripts/test.py
++++ b/retarget/scripts/test.py
+@@ -151,6 +151,35 @@ def run(args: argparse.Namespace) -> None:
+     if left_cam_np is None or right_cam_np is None:
+         raise RuntimeError("Clip is missing both-hand tracking data.")
+ 
++    # ── bad/missing frame fallback (input side) ───────────────────────────────
++    # get_window() fills detection gaps with an unbounded zero-order hold and
++    # passes implausible-but-detected poses through untouched.  Redo it from the
++    # raw NaN-bearing trajectories so that (a) perception blow-ups are rejected,
++    # (b) gap length decides the fill policy, and (c) every frame's provenance is
++    # recorded for the joint-space rest-pose fallback and for downstream filtering.
++    st_l = st_r = ca_l = ca_r = None
++    if args.bad_frame_fallback:
++        from utils.traj_cleanup import clean_wrist_trajectory
++        _raw_l, _raw_r = seq.raw_wrist_trajectories()
++        print("Bad/missing frame fallback:")
++        left_cam_np, st_l, ca_l, _rep_l = clean_wrist_trajectory(
++            _raw_l, seq_fps, max_interp_sec=args.max_interp_sec,
++            max_hold_sec=args.max_hold_sec,
++            detect_bad=not args.no_bad_frame_detect, side="left")
++        right_cam_np, st_r, ca_r, _rep_r = clean_wrist_trajectory(
++            _raw_r, seq_fps, max_interp_sec=args.max_interp_sec,
++            max_hold_sec=args.max_hold_sec,
++            detect_bad=not args.no_bad_frame_detect, side="right")
++        if np.isnan(left_cam_np[:, 0]).all() or np.isnan(right_cam_np[:, 0]).all():
++            # The root-frame estimator consumes both wrist trajectories, so a
++            # hand that is never detected anywhere cannot be faked without
++            # biasing the torso anchor.  Reject the clip rather than invent one.
++            _miss = "left" if np.isnan(left_cam_np[:, 0]).all() else "right"
++            raise RuntimeError(
++                f"{_miss} hand is never detected in this clip — the root-frame "
++                f"estimator needs both wrists. Whole-clip single-hand support is "
++                f"out of scope for the gap fallback; screen this clip out instead.")
++
+     vid_frames = load_video_frames(clip_path / "depth.mp4")
+     vid_h, vid_w = (vid_frames[0].shape[:2] if vid_frames else (480, 640))
+     K = {"fx": seq.focal, "fy": seq.focal,
+@@ -189,14 +218,10 @@ def run(args: argparse.Namespace) -> None:
+         left_cam_ik  = left_cam_np
+         right_cam_ik = right_cam_np
+ 
+-    # ── Step 1: estimate root poses at strided window positions ──────────────
+     _stride = args.window_stride if args.window_stride is not None \
+               else max(4, int(round(args.window_secs * seq_fps)))
+-    kf_positions, Rs, ts = estimate_root_poses(
+-        model, left_cam_ik, right_cam_ik, g_cam_t,
+-        seq_len, seq_fps, args.window_secs, _stride, device)
+ 
+-    # ── Step 2: build IK solver ───────────────────────────────────────────────
++    # ── Step 2: build IK solver (needed to score candidate anchors) ───────────
+     _wsc           = _robot_cfg.get("workspace_center")
+     _ik_robot_name = _robot_cfg["ik_robot"]
+     _null_man      = 0.5 if robot_name == "franka" else 0.1
+@@ -213,10 +238,29 @@ def run(args: argparse.Namespace) -> None:
+         null_weight_smo=_null_smo,
+     )
+ 
+-    # ── Step 3: cluster + score → best anchor ────────────────────────────────
+-    R_anchor, t_anchor, _ = select_best_anchor(
+-        Rs, ts, left_cam_ik, right_cam_ik, opt, _wsc,
+-        n_clusters=args.n_clusters)
++    # ── Steps 1+3: best-of-N root anchor sampling ─────────────────────────────
++    # The root estimator is a flow-matching generative model: model.sample()
++    # integrates an ODE from a random prior, so the recovered anchor (and its IK
++    # reachability) varies run-to-run.  Draw n_samples independent estimates and
++    # keep the one whose anchor scores the highest IK-convergence rate.  With
++    # n_samples=1 (default) this is identical to the original single-shot path.
++    best = None  # (anchor_rate, kf_positions, Rs, ts, R_anchor, t_anchor)
++    for i in range(args.n_samples):
++        if args.seed is not None:
++            torch.manual_seed(args.seed + i)
++        kf_positions, Rs, ts = estimate_root_poses(
++            model, left_cam_ik, right_cam_ik, g_cam_t,
++            seq_len, seq_fps, args.window_secs, _stride, device)
++        R_anchor, t_anchor, anchor_rate = select_best_anchor(
++            Rs, ts, left_cam_ik, right_cam_ik, opt, _wsc,
++            n_clusters=args.n_clusters)
++        if args.n_samples > 1:
++            print(f"  [sample {i+1}/{args.n_samples}] anchor ik_rate={anchor_rate*100:.1f}%")
++        if best is None or anchor_rate > best[0]:
++            best = (anchor_rate, kf_positions, Rs, ts, R_anchor, t_anchor)
++    _, kf_positions, Rs, ts, R_anchor, t_anchor = best
++    if args.n_samples > 1:
++        print(f"  best-of-{args.n_samples}: anchor ik_rate={best[0]*100:.1f}%")
+     R_global, t_global = R_anchor, t_anchor
+ 
+     print(f"  anchor t={t_anchor.round(3)}  "
+@@ -285,6 +329,32 @@ def run(args: argparse.Namespace) -> None:
+             q_left  = uniform_filter1d(q_left,  size=_w, axis=0, origin=-(_w//2))
+             q_right = uniform_filter1d(q_right, size=_w, axis=0, origin=-(_w//2))
+ 
++    # ── rest-pose fallback for long gaps (output side, joint space) ────────────
++    # Frames the input cleanup marked FILL_REST carry no trustworthy target: the
++    # gap was too long to interpolate across.  Rather than freeze the arm on
++    # whatever the last (often already-degrading) detection was, ease it to the
++    # robot's natural rest configuration and ease it back on re-acquisition.  The
++    # weight is cosine-ramped from both sides, so neither boundary jumps.
++    w_rest_l = np.zeros(seq_len)
++    w_rest_r = np.zeros(seq_len)
++    if args.bad_frame_fallback and args.rest_fallback:
++        from utils.traj_cleanup import blend_to_rest, FILL_REST
++        _rest = _robot_cfg["start_config"]
++        if (st_l == FILL_REST).any() or (st_r == FILL_REST).any():
++            print("Rest-pose fallback:")
++        if (st_l == FILL_REST).any():
++            q_left, w_rest_l = blend_to_rest(
++                q_left, st_l, np.asarray(_rest["left"], np.float64),
++                seq_fps, ramp_sec=args.rest_ramp_sec)
++            print(f"  left : {int((st_l == FILL_REST).sum())} frames → rest "
++                  f"(max weight {w_rest_l.max():.2f})")
++        if (st_r == FILL_REST).any():
++            q_right, w_rest_r = blend_to_rest(
++                q_right, st_r, np.asarray(_rest["right"], np.float64),
++                seq_fps, ramp_sec=args.rest_ramp_sec)
++            print(f"  right: {int((st_r == FILL_REST).sum())} frames → rest "
++                  f"(max weight {w_rest_r.max():.2f})")
++
+     # Finger retargeting
+     Q_lf = Q_rf = None
+     finger_jnames: list[str] = []
+@@ -312,6 +382,41 @@ def run(args: argparse.Namespace) -> None:
+             elif last is not None: Q_rf[t] = last
+         finger_jnames = finger_jnames or rt_r.joint_names
+ 
++    # Relax the fingers on rest-pose frames too — an arm hanging at the side with
++    # the last-detected grasp still clenched reads as a held object that isn't
++    # there.  Same cosine weights as the arm, so the hand opens/closes smoothly.
++    if w_rest_l.any() or w_rest_r.any():
++        from utils.traj_cleanup import relax_fingers
++        if w_rest_l.any():
++            Q_lf = relax_fingers(Q_lf, w_rest_l)
++        if w_rest_r.any():
++            Q_rf = relax_fingers(Q_rf, w_rest_r)
++
++    # Arm-vs-torso self-collision (proxy-based; needed for robots whose MuJoCo
++    # collision geoms are disabled, e.g. M7, where CollisionFilter finds nothing
++    # and the torso is excluded from the cross-arm pass by construction).
++    # Runs after finger retargeting so a hand poking into the torso is detected
++    # (fingertip proxies) and corrected by moving the arm; finger joints are
++    # left untouched.
++    if args.arm_torso_collision:
++        from models.arm_torso_filter import ArmTorsoFilter
++        _atf = ArmTorsoFilter(_robot_cfg,
++                              include_fingers=not args.atf_no_fingers)
++        q_left, q_right = _atf.process(
++            q_left, q_right,
++            q_left_fingers=Q_lf, q_right_fingers=Q_rf, finger_jnames=finger_jnames)
++
++    # Hand-vs-hand interpenetration (proxy-based, sphere sets per hand).  Runs
++    # after finger retargeting.  Deliberately more conservative than the torso
++    # pass: two hands touching is usually a legitimate bimanual grasp, so it
++    # only fires on clear pass-through and pushes both arms apart symmetrically.
++    if args.dual_hand_collision:
++        from models.dual_hand_filter import DualHandFilter
++        _dhf = DualHandFilter(_robot_cfg)
++        q_left, q_right = _dhf.process(
++            q_left, q_right,
++            q_left_fingers=Q_lf, q_right_fingers=Q_rf, finger_jnames=finger_jnames)
++
+     # Build env for joint names + rendering
+     scene_path = _robot_cfg.get("scene_path_fingers", _robot_cfg["scene_path"])
+     env_vis = _robot_cfg["env_cls"](
+@@ -350,6 +455,14 @@ def run(args: argparse.Namespace) -> None:
+             draw_hand_keypoints(img, all_right_j[t], K, (0, 100, 220))
+         cv2.putText(img, f"{t+1}/{seq_len}  {robot_name}  a={args.torso_alpha:.2f}",
+                     (8, vid_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
++        if st_l is not None:
++            from utils.traj_cleanup import STATUS_NAMES
++            _tag = " ".join(f"{s}:{STATUS_NAMES[int(a[t])]}"
++                            for s, a in (("L", st_l), ("R", st_r))
++                            if int(a[t]) != 0)
++            if _tag:
++                cv2.putText(img, _tag, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
++                            0.55, (60, 220, 255), 2)
+         input_frames.append(img)
+ 
+     robot_frames = render_robot_sim(
+@@ -359,7 +472,9 @@ def run(args: argparse.Namespace) -> None:
+     save_trajectory(out_dir / "trajectory.npz",
+                      q_left, q_right, Q_lf, Q_rf,
+                      l_jnames, r_jnames, finger_jnames,
+-                     seq_fps, robot_name, clip_path.name)
++                     seq_fps, robot_name, clip_path.name,
++                     status_left=st_l, status_right=st_r,
++                     cause_left=ca_l,  cause_right=ca_r)
+     np.savez(out_dir / "root_frames.npz",
+              R_per_frame=R_per_frame.astype(np.float32),
+              t_per_frame=t_per_frame.astype(np.float32),
+@@ -425,7 +540,7 @@ def _parse() -> argparse.Namespace:
+ 
+     # ── I/O ───────────────────────────────────────────────────────────────────
+     p.add_argument("--robot",  default="g1",
+-                   choices=["g1", "franka", "robonaut2", "xlerobot"],
++                   choices=["g1", "franka", "robonaut2", "xlerobot", "m7"],
+                    help="Target robot to retarget to.")
+     p.add_argument("--ckpt",   default=None, metavar="PATH",
+                    help="Path to model checkpoint. "
+@@ -447,6 +562,17 @@ def _parse() -> argparse.Namespace:
+     p.add_argument("--n_clusters",         type=int,   default=5,
+                    help="Number of SE(3) K-medoids clusters used to find the "
+                         "best root anchor from all window estimates.")
++    p.add_argument("--n_samples",          type=int,   default=1,
++                   help="Best-of-N root anchor sampling. The root estimator is "
++                        "a flow-matching generative model whose anchor varies "
++                        "run-to-run; with >1, draw this many independent "
++                        "estimates and keep the highest-IK-rate anchor. Default "
++                        "1 = original single-shot behaviour.")
++    p.add_argument("--seed",               type=int,   default=None,
++                   help="Seed for torch's global RNG (used by the flow-matching "
++                        "prior). Set for reproducible root anchors; each "
++                        "best-of-N sample uses seed+i. Default None = "
++                        "nondeterministic.")
+     p.add_argument("--torso_alpha",        type=float, default=0.3,
+                    help="Translation blend weight between the global anchor "
+                         "(0) and the per-window estimate (1). Lower values "
+@@ -471,6 +597,48 @@ def _parse() -> argparse.Namespace:
+     p.add_argument("--self_collision", action="store_true",
+                    help="Run gradient-based self-collision post-processing "
+                         "(CollisionFilter) on the final joint trajectory.")
++    p.add_argument("--arm_torso_collision", action="store_true",
++                   help="Run proxy-based arm-vs-torso self-collision post-"
++                        "processing (ArmTorsoFilter). Use for robots with "
++                        "disabled MuJoCo collision geoms (e.g. M7).")
++    p.add_argument("--atf_no_fingers", action="store_true",
++                   help="With --arm_torso_collision, detect only arm bones "
++                        "(B1), excluding fingertips (B2). For ablation.")
++    p.add_argument("--dual_hand_collision", action="store_true",
++                   help="Run proxy-based hand-vs-hand self-collision post-"
++                        "processing (DualHandFilter). Conservative: only fires "
++                        "on clear hand pass-through, preserves bimanual grasps.")
++
++    # ── bad / missing frame fallback ──────────────────────────────────────────
++    p.add_argument("--bad_frame_fallback", action="store_true",
++                   help="Replace the unbounded zero-order hold that fills "
++                        "detection gaps with a length-aware policy, and reject "
++                        "implausible-but-detected wrist poses (perception "
++                        "blow-ups). Writes per-frame provenance codes to "
++                        "trajectory.npz.")
++    p.add_argument("--max_interp_sec", type=float, default=1.5, metavar="SEC",
++                   help="With --bad_frame_fallback: interior gaps up to this "
++                        "long are interpolated between their two valid ends. "
++                        "Longer ones get the rest-pose fallback.")
++    p.add_argument("--max_hold_sec",   type=float, default=0.5, metavar="SEC",
++                   help="With --bad_frame_fallback: leading/trailing gaps up to "
++                        "this long hold the nearest valid pose (there is no "
++                        "second end to interpolate to). Longer ones get the "
++                        "rest-pose fallback.")
++    p.add_argument("--no_bad_frame_detect", action="store_true",
++                   help="With --bad_frame_fallback, handle only missing frames "
++                        "and skip implausible-value rejection. For ablation.")
++    p.add_argument("--rest_fallback", action="store_true", default=True,
++                   help="Ease the arm to the robot's start configuration across "
++                        "gaps too long to interpolate, instead of freezing it on "
++                        "the last detection.")
++    p.add_argument("--no_rest_fallback", dest="rest_fallback",
++                   action="store_false",
++                   help="Keep the held/interpolated pose on long gaps instead of "
++                        "easing to the rest pose. For ablation.")
++    p.add_argument("--rest_ramp_sec",  type=float, default=0.5, metavar="SEC",
++                   help="Cosine ramp duration used to ease into and out of the "
++                        "rest pose.")
+ 
+     # ── visualisation ─────────────────────────────────────────────────────────
+     p.add_argument("--axis_len_wrist", type=float, default=0.15,
+diff --git a/retarget/scripts/train.py b/retarget/scripts/train.py
+index 3e30451..d6096a5 100644
+--- a/retarget/scripts/train.py
++++ b/retarget/scripts/train.py
+@@ -619,7 +619,7 @@ def _parse():
+     p = argparse.ArgumentParser(description="Train NeuralRootFrameEstimator")
+ 
+     # Robot
+-    p.add_argument("--robot", default="g1", choices=["g1", "franka", "robonaut2", "xlerobot"],
++    p.add_argument("--robot", default="g1", choices=["g1", "franka", "robonaut2", "xlerobot", "m7"],
+                    help="Which robot to train on (default: g1)")
+ 
+     # Data
+diff --git a/retarget/sim/robots/__init__.py b/retarget/sim/robots/__init__.py
+index 1d88a76..193e3fc 100644
+--- a/retarget/sim/robots/__init__.py
++++ b/retarget/sim/robots/__init__.py
+@@ -17,17 +17,20 @@ from sim.robots.g1.config        import CONFIG as _G1,        ENV_CONFIG as _G1_
+ from sim.robots.franka.config    import CONFIG as _FRANKA,    ENV_CONFIG as _FRANKA_ENV
+ from sim.robots.robonaut2.config import CONFIG as _ROBONAUT2, ENV_CONFIG as _ROBONAUT2_ENV
+ from sim.robots.xlerobot.config  import CONFIG as _XLEROBOT,  ENV_CONFIG as _XLEROBOT_ENV
++from sim.robots.m7.config        import CONFIG as _M7,        ENV_CONFIG as _M7_ENV
+ 
+ from sim.robots.g1.sample_config        import SAMPLE_CONFIG as _G1_SC
+ from sim.robots.franka.sample_config    import SAMPLE_CONFIG as _FRANKA_SC
+ from sim.robots.robonaut2.sample_config import SAMPLE_CONFIG as _ROBONAUT2_SC
+ from sim.robots.xlerobot.sample_config  import SAMPLE_CONFIG as _XLEROBOT_SC
++from sim.robots.m7.sample_config        import SAMPLE_CONFIG as _M7_SC
+ 
+ ROBOT_CONFIGS = {
+     "g1":        _G1,
+     "franka":    _FRANKA,
+     "robonaut2": _ROBONAUT2,
+     "xlerobot":  _XLEROBOT,
++    "m7":        _M7,
+ }
+ 
+ SAMPLE_CONFIGS = {
+@@ -35,6 +38,7 @@ SAMPLE_CONFIGS = {
+     "franka":    _FRANKA_SC,
+     "robonaut2": _ROBONAUT2_SC,
+     "xlerobot":  _XLEROBOT_SC,
++    "m7":        _M7_SC,
+ }
+ 
+ ENV_CONFIGS = {
+@@ -42,4 +46,5 @@ ENV_CONFIGS = {
+     "franka":    _FRANKA_ENV,
+     "robonaut2": _ROBONAUT2_ENV,
+     "xlerobot":  _XLEROBOT_ENV,
++    "m7":        _M7_ENV,
+ }
+diff --git a/retarget/utils/clip_io.py b/retarget/utils/clip_io.py
+index d6e2f05..8395bbc 100644
+--- a/retarget/utils/clip_io.py
++++ b/retarget/utils/clip_io.py
+@@ -149,6 +149,16 @@ class SamplesSequence:
+             else:        traj[i] = last
+         return traj
+ 
++    def raw_wrist_trajectories(self):
++        """Per-frame wrist poses with NaN kept on undetected frames.
++
++        ``get_window`` fills gaps with an *unbounded* zero-order hold, which
++        erases any record of which frames were invented.  Callers that need to
++        distinguish real detections from filled ones (see utils.traj_cleanup)
++        must start from these raw arrays instead.
++        """
++        return self._left_traj.copy(), self._right_traj.copy()
++
+     def get_window(self, start: int, length: int) -> dict:
+         end = min(start + length, self.n_frames)
+         def _window(traj):
+@@ -171,8 +181,15 @@ class SamplesSequence:
+ # ── trajectory saving ─────────────────────────────────────────────────────────
+ 
+ def save_trajectory(path, q_left, q_right, Q_lf, Q_rf,
+-                    l_jnames, r_jnames, f_jnames, fps, robot, clip_id):
+-    """Save arm (and optionally finger) joint trajectories to an .npz file."""
++                    l_jnames, r_jnames, f_jnames, fps, robot, clip_id,
++                    status_left=None, status_right=None,
++                    cause_left=None, cause_right=None):
++    """Save arm (and optionally finger) joint trajectories to an .npz file.
++
++    ``status_*`` / ``cause_*`` are the per-frame provenance codes from
++    utils.traj_cleanup (0=real detection, 1=interpolated, 2=held, 3=rest-pose
++    fallback / not usable as training data).  Saved so consumers can filter.
++    """
+     data = {
+         "q_left":                q_left.astype(np.float32),
+         "q_right":               q_right.astype(np.float32),
+@@ -190,4 +207,10 @@ def save_trajectory(path, q_left, q_right, Q_lf, Q_rf,
+         data["q_right_fingers"]          = Q_rf.astype(np.float32)
+         data["right_finger_joint_names"] = np.array(
+             [f"right_{n}_joint" for n in f_jnames], dtype=object)
++    for k, v in (("frame_status_left",  status_left),
++                 ("frame_status_right", status_right),
++                 ("frame_cause_left",   cause_left),
++                 ("frame_cause_right",  cause_right)):
++        if v is not None:
++            data[k] = np.asarray(v, dtype=np.int8)
+     np.savez(path, **data)
