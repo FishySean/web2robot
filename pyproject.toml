@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "web2robot"
+version = "0.1.0"
+description = "网络视频 → 机器人动作训练数据：质检 / 路由 / 重定向 / 碰撞检测"
+requires-python = ">=3.10"
+
+# 依赖故意只写"直接 import 的、且不属于重型感知栈"的部分。
+# torch / jax / mujoco / ultralytics 不列在这里：三个 venv 已经装好了
+# （见 envs/requirements-*.txt 的精确版本），在共享机器上让 pip 去解
+# 这些包的依赖只会把已经能跑的环境弄坏。
+dependencies = [
+    "numpy",
+    "scipy",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+# 记录用：真正要从零重建环境时的参考，实际请用 envs/requirements-*.txt
+dev = []   # 测试用 stdlib unittest，无需额外依赖
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# 测试：stdlib unittest，不用 pytest（三个 venv 都没装，共享机器不装包）
+#   envs/rt_env/bin/python -m unittest discover -s tests -v

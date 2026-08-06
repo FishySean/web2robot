@@ -1,0 +1,33 @@
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# ---- symlink 指向仓库外的实体，不进 git ----
+# envs/ 下是三个 venv 的 symlink（实体 21 GB / 14 万文件）
+# 依赖清单 requirements-*.txt 是要提交的，所以只忽略 symlink 本身
+envs/rt_env
+envs/hawor_env
+envs/perception_env
+# external/ 是第三方仓库的 symlink（EgoInfinity / HaWoR）
+external/EgoInfinity
+external/HaWoR
+# data/ 是素材，体积大且可重新抓取
+data/*
+!data/.gitkeep
+
+# ---- 运行产物 ----
+outputs/
+*.log
+MUJOCO_LOG.TXT
+
+# ---- 权重（几百 MB ~ GB，从上游仓库取）----
+assets/weights/*
+!assets/weights/.gitkeep
+
+# ---- 例外：这些必须进 git ----
+# assets/robots/m7/  M7 的 MJCF/URDF/STL（21 MB，是我们自己产出的资产）
+# tests/regression/  回归基准（含 3 个构造对照 mp4，5.8 MB，改阈值必须比对）

@@ -1,0 +1,50 @@
+# web2robot 路径配置 —— 全工程唯一允许出现绝对路径的地方
+#
+# 重构前有 40 个 .py 文件里散着 "/mnt/vlm/fanshaoheng" 字面量，
+# 这是"换机器/搬目录就全碎"的根源。所有代码一律通过
+#   from web2robot.paths import P
+# 取路径，不再写死。换机器时只改这一个文件。
+#
+# 相对路径以本仓库根目录为基准；写绝对路径也支持。
+# 格式用 YAML 而不是 TOML：三个 venv 都是 python 3.10（无 stdlib tomllib），
+# 而 rt_env / perception_env 里没有 tomli，且这是共享机器不能随便装包。
+# PyYAML 6.0.3 三个环境都有。
+
+roots:
+  # 第三方仓库（external/ 下是指向它们的 symlink，内容不改）
+  egoinfinity: external/EgoInfinity
+  hawor:       external/HaWoR
+  # 归档：重构前的探索性目录，只读留档
+  archive_hand_projects: ../hand_projects
+  archive_phase1_repro:  ../phase1_repro
+
+envs:
+  # 三个 venv 是 symlink，实体在旧目录（21 GB / 14 万文件，不可搬移：
+  # bin/ 里是绝对路径 shebang，pyvenv.cfg 的 home= 还串成了链
+  # gs3dgs_env -> hand2robot/env -> rt_env）。依赖清单见 envs/requirements-*.txt。
+  # 必须用绝对路径调用解释器：这台机器上 conda activate 不生效。
+  retarget:   envs/rt_env/bin/python          # 重定向 + 质检（jax/mujoco/torch/ultralytics）
+  hawor:      envs/hawor_env/bin/python       # HaWoR SLAM 手部
+  perception: envs/perception_env/bin/python  # WiLoR + MoGe
+
+weights:
+  # YOLO 手部检测器：HaWoR 与 EgoInfinity 两处是同一个文件，都列出按顺序找
+  hand_detector:
+    - external/HaWoR/weights/external/detector.pt
+    - external/EgoInfinity/pretrained_models/detector.pt
+  wilor_ckpt:   external/EgoInfinity/pretrained_models/wilor_final.ckpt
+  wilor_config: external/EgoInfinity/configs/wilor_model_config.yaml
+  # torchvision 下载 KeypointRCNN 权重的落地点
+  # （共享机器上别用默认 ~/.cache，别人也在用同一个 HOME）
+  torch_home:   assets/weights
+
+assets:
+  m7_mjcf:   assets/robots/m7/m7.xml
+  m7_mjx:    assets/robots/m7/m7_mjx.xml
+  m7_urdf:   assets/robots/m7/m7_from_urdf.urdf
+  m7_scene:  assets/robots/m7/scene_vis.xml
+  m7_meshes: assets/robots/m7/meshes
+
+data:
+  videos:  data/videos     # symlink -> hand_projects/hand2robot/videos
+  outputs: outputs
