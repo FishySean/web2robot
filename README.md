@@ -36,14 +36,31 @@
 
 ```bash
 scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --viz outputs/ev/
+
+# ④重定向 + ⑤碰撞纠正（上游 EgoInfinity 主流程，碰撞/清洗逻辑走我方包）
+scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/fill_jar \
+    --ckpt runs/m7/taskspace_v2/checkpoints/final.pt --seed 0 --n_samples 5 \
+    --arm_torso_collision --dual_hand_collision
 ```
 
 不用 `pip install`。三个 venv 已经装好了要用的东西（`envs/requirements-*.txt` 记着精确版本），
 而这是**共享机器，不要往里装包**。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，10/10
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，12/12
 ```
+
+## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
+
+1. **无头机器没有 X11**，默认 GLFW 后端直接 `could not initialize GLFW`：轨迹算完了却出不了片。
+   `egl` 在这套 driver 上清理时抛 `EGLError`，**`osmesa`（CPU 软渲染）实测可用**。
+2. **`--no-preview` 不加会丢掉整份日志。** 上游跑完拉一个交互式 GLFW 预览窗，无头机上它在
+   C 层 abort，python 的 stdout 缓冲区来不及 flush —— 踩过：`robot_sim.mp4` 都写出来了，
+   日志里只剩一行 GLFW 报错，`ArmTorsoFilter` 的统计全丢。配 `PYTHONUNBUFFERED=1` 双保险。
+   （注意是 `--no-preview`，连字符，不是下划线。）
+3. **不给 `--seed` 就没法和任何人对比结果。** 根锚点是从**随机先验**积 ODE 得来的
+   （上游 `test.py` 第 241 区块自己写了这件事），所以锚点和 IK 可达性每次都不同。
+   要做新旧代码对比，必须 `--seed` 固定 + `--n_samples` 相同。
 
 ## 两个踩过的坑，都已经用测试钉住
 
@@ -77,5 +94,25 @@ envs/rt_env/bin/python scripts/dev/diff_quality_run.py /tmp/re/qc.jsonl
 `cup_cpvH8gzUTko` 的 `torso_rate` 就从 0.4828 变 0.4655（n=58，差值正好 1/58，一帧翻转）。
 判的是两件更贴近实质的事：判决字段逐字一致，以及每个参与判决的信号没有越过它的阈值。
 
-还有一条规矩：**指标 ≠ 画面**。数值对了不等于数据可信，出片或看 contact sheet 确认，
-别只看表格。视频统一 h264 / yuv420p，否则 VSCode 里放不出来。
+## 改了碰撞检测 / 轨迹清洗之后
+
+碰撞过滤是有限差分梯度下降、纯 CPU、没有随机源，**要求逐位相同**（比第①步那条
+"判决一致"的判据严格）。三条线各测各的：
+
+```bash
+# 1. 隔离对比：把过滤器从整条链里拽出来，喂同一份输入跑旧/新两份实现
+envs/rt_env/bin/python scripts/dev/diff_collision_migration.py
+
+# 2. 端到端：同 seed 跑两遍，trajectory.npz 每个 key 逐位相同、robot_sim.mp4 md5 相同
+# 3. 出四宫格看画面（源视频 / 不开碰撞 / 新代码 / 旧代码）
+scripts/dev/render_quad.sh ...
+```
+
+端到端之所以不能单独作为判据：上游锚点的随机性会把迁移带来的差异**掩盖或伪造**成
+几十度的关节角差 —— 第一次跑就被这个骗过，以为迁移改坏了 108°。
+
+## 一条贯穿全流程的规矩：指标 ≠ 画面
+
+数值对了不等于数据可信。任何一步改完都要出片或看 contact sheet 用眼睛确认，别只看表格 ——
+IK 成功率 100% 的片段照样可能手穿进躯干。视频统一 h264 / yuv420p，否则 VSCode 里放不出来。
+

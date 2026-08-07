@@ -103,7 +103,7 @@ index 2d8dc8c..fee4daa 100644
      def xlerobot(side: str) -> "RobotIKConfig":
          """XLeRobot 5-DoF SO-ARM100 arm (Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll)."""
 diff --git a/retarget/scripts/test.py b/retarget/scripts/test.py
-index f8f1b5f..418436b 100644
+index f8f1b5f..0254309 100644
 --- a/retarget/scripts/test.py
 +++ b/retarget/scripts/test.py
 @@ -151,6 +151,35 @@ def run(args: argparse.Namespace) -> None:
@@ -118,7 +118,7 @@ index f8f1b5f..418436b 100644
 +    # recorded for the joint-space rest-pose fallback and for downstream filtering.
 +    st_l = st_r = ca_l = ca_r = None
 +    if args.bad_frame_fallback:
-+        from utils.traj_cleanup import clean_wrist_trajectory
++        from web2robot.trajectory.traj_cleanup import clean_wrist_trajectory
 +        _raw_l, _raw_r = seq.raw_wrist_trajectories()
 +        print("Bad/missing frame fallback:")
 +        left_cam_np, st_l, ca_l, _rep_l = clean_wrist_trajectory(
@@ -205,7 +205,7 @@ index f8f1b5f..418436b 100644
 +    w_rest_l = np.zeros(seq_len)
 +    w_rest_r = np.zeros(seq_len)
 +    if args.bad_frame_fallback and args.rest_fallback:
-+        from utils.traj_cleanup import blend_to_rest, FILL_REST
++        from web2robot.trajectory.traj_cleanup import blend_to_rest, FILL_REST
 +        _rest = _robot_cfg["start_config"]
 +        if (st_l == FILL_REST).any() or (st_r == FILL_REST).any():
 +            print("Rest-pose fallback:")
@@ -233,7 +233,7 @@ index f8f1b5f..418436b 100644
 +    # the last-detected grasp still clenched reads as a held object that isn't
 +    # there.  Same cosine weights as the arm, so the hand opens/closes smoothly.
 +    if w_rest_l.any() or w_rest_r.any():
-+        from utils.traj_cleanup import relax_fingers
++        from web2robot.trajectory.traj_cleanup import relax_fingers
 +        if w_rest_l.any():
 +            Q_lf = relax_fingers(Q_lf, w_rest_l)
 +        if w_rest_r.any():
@@ -246,7 +246,7 @@ index f8f1b5f..418436b 100644
 +    # (fingertip proxies) and corrected by moving the arm; finger joints are
 +    # left untouched.
 +    if args.arm_torso_collision:
-+        from models.arm_torso_filter import ArmTorsoFilter
++        from web2robot.collision.arm_torso_filter import ArmTorsoFilter
 +        _atf = ArmTorsoFilter(_robot_cfg,
 +                              include_fingers=not args.atf_no_fingers)
 +        q_left, q_right = _atf.process(
@@ -258,7 +258,7 @@ index f8f1b5f..418436b 100644
 +    # pass: two hands touching is usually a legitimate bimanual grasp, so it
 +    # only fires on clear pass-through and pushes both arms apart symmetrically.
 +    if args.dual_hand_collision:
-+        from models.dual_hand_filter import DualHandFilter
++        from web2robot.collision.dual_hand_filter import DualHandFilter
 +        _dhf = DualHandFilter(_robot_cfg)
 +        q_left, q_right = _dhf.process(
 +            q_left, q_right,
@@ -272,7 +272,7 @@ index f8f1b5f..418436b 100644
          cv2.putText(img, f"{t+1}/{seq_len}  {robot_name}  a={args.torso_alpha:.2f}",
                      (8, vid_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
 +        if st_l is not None:
-+            from utils.traj_cleanup import STATUS_NAMES
++            from web2robot.trajectory.traj_cleanup import STATUS_NAMES
 +            _tag = " ".join(f"{s}:{STATUS_NAMES[int(a[t])]}"
 +                            for s, a in (("L", st_l), ("R", st_r))
 +                            if int(a[t]) != 0)
