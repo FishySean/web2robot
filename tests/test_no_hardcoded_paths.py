@@ -40,13 +40,21 @@ class TestNoHardcodedPaths(unittest.TestCase):
             + "\n  ".join(offenders))
 
     def test_scripts_only_hardcode_via_root(self):
-        """scripts/ 里的薄壳可以拼路径，但必须相对自己的位置推出仓库根。"""
+        """薄壳里凡是要指仓库内的东西，都必须相对自己的位置推出仓库根。
+
+        判据是"这个脚本引用了仓库内的路径吗"，而不是"是不是 .sh" —— 纯粹包一层
+        外部命令的脚本（比如 ``render_quad.sh`` 只调 ffmpeg）没有仓库根的概念，
+        要求它写 BASH_SOURCE 是没意义的形式主义。
+        """
+        REPO_REFS = ("envs/", "src/", "external/", "configs/", "assets/")
         for sh in sorted((REPO / "scripts").rglob("*.sh")):
             body = sh.read_text()
             with self.subTest(script=sh.name):
                 self.assertNotIn("/mnt/vlm", body)
-                self.assertIn("BASH_SOURCE", body,
-                              "薄壳必须用 BASH_SOURCE 推仓库根，不能写死路径")
+                if any(r in body for r in REPO_REFS):
+                    self.assertIn("BASH_SOURCE", body,
+                                  "引用了仓库内路径的薄壳必须用 BASH_SOURCE 推"
+                                  "仓库根，不能写死路径")
 
 
 class TestQualityModuleWiring(unittest.TestCase):
