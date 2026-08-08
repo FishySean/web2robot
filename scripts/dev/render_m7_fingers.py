@@ -12,16 +12,17 @@ arm targets are unreachable (IK 0%), so we pin the arms at the config seed pose.
 This render says nothing about arm-following on real data — only fingers + the
 static hand frame orientation.
 """
-from pathlib import Path
 import numpy as np
 import mujoco
 import imageio.v2 as imageio
 
+from _devcli import parser, load_traj
 from web2robot.robots.m7.env import M7Env
 from web2robot.robots.m7.config import CONFIG
 
-OUT_DIR = Path("/mnt/vlm/fanshaoheng/phase1_repro/m7_test_out")
-TRAJ = np.load(OUT_DIR / "trajectory.npz", allow_pickle=True)
+_p = parser(__doc__)
+_args = _p.parse_args()
+TRAJ, OUT_DIR = load_traj(_args)
 
 qLf = TRAJ["q_left_fingers"]                    # (T, 12)
 qRf = TRAJ["q_right_fingers"]                   # (T, 12)
@@ -70,5 +71,5 @@ print("left  curl mean per frame min/max:",
 
 # dump sample frames for inspection
 for i, idx in enumerate([0, T//3, 2*T//3, T-1]):
-    imageio.imwrite(f"/tmp/m7f_{i}.png", frames[idx])
-print("saved 4 sample PNGs to /tmp")
+    imageio.imwrite(OUT_DIR / f"m7f_{i}.png", frames[idx])
+print(f"saved 4 sample PNGs to {OUT_DIR}")

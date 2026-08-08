@@ -20,6 +20,7 @@
 | 位置 | 是什么 |
 |---|---|
 | `src/web2robot/` | 全部逻辑。模块按**流水线环节**命名，一个环节一个包 |
+| `src/web2robot/robots/` | 机器人定义（一台机器人一个子包，**不 import 任何重定向框架**）|
 | `configs/paths.yaml` | **全工程唯一允许出现绝对路径的地方**。换机器只改这一个文件 |
 | `scripts/` | 薄壳，只负责"用对的解释器 + 设好 PYTHONPATH"，不含逻辑 |
 | `scripts/dev/` | 开发期工具（回归比对之类） |
@@ -47,7 +48,7 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/fill_jar \
 而这是**共享机器，不要往里装包**。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，12/12
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，18/18
 ```
 
 ## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
@@ -110,6 +111,31 @@ scripts/dev/render_quad.sh ...
 
 端到端之所以不能单独作为判据：上游锚点的随机性会把迁移带来的差异**掩盖或伪造**成
 几十度的关节角差 —— 第一次跑就被这个骗过，以为迁移改坏了 108°。
+
+## 改了 M7 的机器人定义（`src/web2robot/robots/m7/` 或 `assets/robots/m7/`）之后
+
+两个验收脚本，输出要和上一次逐字节一致；`hand_frame` 那条约定尤其不能动：
+
+```bash
+scripts/dev/m7_tool.sh verify_m7_mjx_fk.py            # 期望 0.0000 mm / 0.0000 deg  MATCH ✓
+scripts/dev/m7_tool.sh check_handframe_convention.py  # 期望 m7 左手 finger=+y thumb=-x palm=+z，右手镜像
+
+# 再加一档：拿一段真实重定向轨迹逐帧验，而不是只验资产里写死的 home 姿态
+scripts/dev/m7_tool.sh check_handframe_convention.py --traj runs/m7/validation/fill_jar
+#   期望 "违反约定的帧: 0/216 ✓"，且两只手整段各只出现过一种轴向组合
+```
+
+**`hand_frame` 的轴向是 finger+y / thumb−x / palm+z（左手），右手镜像。**
+2026-07-24 吃过一次亏：检查脚本只验左手、还用了退化的 r2 body，错误地得出"两只手同
+一套约定"，结果 M7 右手手掌/拇指被建成翻了 180°。现在脚本两只手都验、拿 g1/r2 当参照
+断言镜像关系，`tests/test_m7_robot.py` 里还有一份秒级回归版。**永远不要只验一侧。**
+
+还有一条只能靠跑才发现的：**动完 M7 资产的位置，删掉旧目录之后必须再跑一次端到端。**
+上游有拼接出来的资产路径（`_ROBOTS_DIR / "m7" / "m7.xml"`），grep 找不到，而删除之前
+跑的端到端会悄悄读旧文件、绿得很好看。详见 `external/patches/README.md`。
+
+`m7_mjx.xml` 是生成物（`scripts/dev/generate_m7_mjx.py`），但**重跑生成器不会得到逐位
+相同的文件** —— 原因和处置写在那个脚本的头部注释里，动它之前先看。
 
 ## 一条贯穿全流程的规矩：指标 ≠ 画面
 

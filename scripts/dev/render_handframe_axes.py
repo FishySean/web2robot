@@ -1,9 +1,16 @@
 """Re-render M7 validation clips with hand_frame local XYZ axes drawn as 3D arrows.
 
 Axis colors: X=red (thumb side), Y=green (finger dir), Z=blue (palm normal).
-Used to visually check whether the RIGHT hand palm normal / thumb axis is flipped
-relative to the pipeline convention (see check_handframe_convention.py:
-r2/g1 both mirror palm-normal between hands; M7 currently does NOT).
+
+这个脚本当初是用来**看出**右手翻了 180° 的：M7 建模时两只手被做成完全一样，而 g1/r2
+两台已知正确的机器人都是左右镜像 palm normal 的。修好之后（``fix_m7_handframe.py``
+算出正确的镜像 quat 写回 ``m7.xml``）它就变成回归用的眼睛 —— 期望看到的是
+**左手蓝箭头朝外、右手蓝箭头朝反方向**，绿箭头两只手同向。
+数值版的判据在 ``check_handframe_convention.py``（两只手都验 + 拿 g1/r2 当参照）。
+
+用法（clip 名是 ``runs/m7/validation/`` 下的目录，相对上游 retarget/）::
+
+    scripts/dev/m7_tool.sh render_handframe_axes.py fill_jar
 """
 import numpy as np, mujoco, cv2, os, sys
 from web2robot.robots.m7.config import CONFIG as M7

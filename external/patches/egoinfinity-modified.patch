@@ -1,5 +1,5 @@
 diff --git a/retarget/kinematics/wilor_retargeter.py b/retarget/kinematics/wilor_retargeter.py
-index b54579d..1eacf45 100644
+index b54579d..67c0cc7 100644
 --- a/retarget/kinematics/wilor_retargeter.py
 +++ b/retarget/kinematics/wilor_retargeter.py
 @@ -380,8 +380,40 @@ def _r2_18dof_from_keypoints(side: str) -> RobotHandConfig:
@@ -15,8 +15,8 @@ index b54579d..1eacf45 100644
 +    (no per-side sign flip needed).  MANO bend angles are ≥0 (straight=0,
 +    curled≈π), which matches the positive close direction.
  
-+    robot_name values are short keys; sim/robots/m7/env.py re-attaches the side
-+    prefix and maps them to the real MJCF joint names (hand_thumb_bend_joint,
++    robot_name values are short keys; web2robot/robots/m7/env.py re-attaches the
++    side prefix and maps them to the real MJCF joint names (hand_thumb_bend_joint,
 +    hand_index_joint1, hand_mid_joint1, ...).
 +    """
 +    return RobotHandConfig(joints=[
@@ -54,10 +54,10 @@ index b54579d..1eacf45 100644
      raise ValueError(f"Unknown robot '{robot}'. "
                       f"Add it to wilor_retargeter.py or to _ROBOTS_WITHOUT_HANDS.")
 diff --git a/retarget/kinematics/wrist_ik.py b/retarget/kinematics/wrist_ik.py
-index 2d8dc8c..fee4daa 100644
+index 2d8dc8c..a08460b 100644
 --- a/retarget/kinematics/wrist_ik.py
 +++ b/retarget/kinematics/wrist_ik.py
-@@ -182,6 +182,44 @@ class RobotIKConfig:
+@@ -182,6 +182,52 @@ class RobotIKConfig:
              joint_limits   = _limits[side],
          )
  
@@ -70,7 +70,15 @@ index 2d8dc8c..fee4daa 100644
 +        The 7 joints between waist_pitch_link and <side>_hand_frame are:
 +        shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch, elbow_yaw,
 +        wrist_pitch, wrist_roll.
++
++        M7 的 MJCF 不在这个仓库里（在 web2robot/assets/robots/m7/），所以路径不走
++        ``_ROBOTS_DIR``，而是从 web2robot 的机器人包里取 —— 和 sim/robots/__init__.py
++        里的适配是同一件事：机器人定义在我方，框架侧只做接线。
++        import 放在函数里而不是模块顶层，是为了让 g1/r2/franka 这些**上游自带的**
++        机器人在没有 web2robot 的环境里照样能 import 这个模块；只有真的要 M7 时
++        才要求我方包在 PYTHONPATH 上，缺了就在这里立刻报，而不是拖到深处。
 +        """
++        from web2robot.robots.m7 import MJCF_PATH as _M7_MJCF
 +        _limits = {
 +            "left": torch.tensor([
 +                [-2.79,  2.79],   # shoulder_pitch
@@ -93,7 +101,7 @@ index 2d8dc8c..fee4daa 100644
 +        }
 +        _ee = {"left": "left_hand_frame", "right": "right_hand_frame"}
 +        return RobotIKConfig(
-+            mjcf_path      = _ROBOTS_DIR / "m7" / "m7.xml",
++            mjcf_path      = _M7_MJCF,
 +            end_link_name  = _ee[side],
 +            root_link_name = "waist_pitch_link",
 +            joint_limits   = _limits[side],
@@ -383,21 +391,30 @@ index 3e30451..d6096a5 100644
  
      # Data
 diff --git a/retarget/sim/robots/__init__.py b/retarget/sim/robots/__init__.py
-index 1d88a76..193e3fc 100644
+index 1d88a76..84e065b 100644
 --- a/retarget/sim/robots/__init__.py
 +++ b/retarget/sim/robots/__init__.py
-@@ -17,17 +17,20 @@ from sim.robots.g1.config        import CONFIG as _G1,        ENV_CONFIG as _G1_
- from sim.robots.franka.config    import CONFIG as _FRANKA,    ENV_CONFIG as _FRANKA_ENV
- from sim.robots.robonaut2.config import CONFIG as _ROBONAUT2, ENV_CONFIG as _ROBONAUT2_ENV
- from sim.robots.xlerobot.config  import CONFIG as _XLEROBOT,  ENV_CONFIG as _XLEROBOT_ENV
-+from sim.robots.m7.config        import CONFIG as _M7,        ENV_CONFIG as _M7_ENV
- 
- from sim.robots.g1.sample_config        import SAMPLE_CONFIG as _G1_SC
- from sim.robots.franka.sample_config    import SAMPLE_CONFIG as _FRANKA_SC
+@@ -23,11 +23,29 @@ from sim.robots.franka.sample_config    import SAMPLE_CONFIG as _FRANKA_SC
  from sim.robots.robonaut2.sample_config import SAMPLE_CONFIG as _ROBONAUT2_SC
  from sim.robots.xlerobot.sample_config  import SAMPLE_CONFIG as _XLEROBOT_SC
-+from sim.robots.m7.sample_config        import SAMPLE_CONFIG as _M7_SC
  
++# ── M7 (RoboEra) ──────────────────────────────────────────────────────────────
++# M7 的机器人定义不在这个仓库里，在 web2robot/src/web2robot/robots/m7/。
++# 那一层刻意不 import 任何重定向框架（只出纯 dict 和自己的 env 类），这样它能
++# 被别的框架直接拿去用；代价是"框架侧怎么认识它"要在框架侧写，也就是这里。
++#
++# 于是 ENV_SPEC 是 dict 而不是 RobotConfig 实例，由这里包成 dataclass。
++# 这一行还顺带当了个检查：上游哪天给 RobotConfig 加了必填字段，import 时就
++# TypeError，而不是悄悄用默认值跑出错的 FK。
++#
++# 需要 web2robot/src 在 PYTHONPATH 里（scripts/s4_retarget.sh 已设好）。
++from sim.robot_config import RobotConfig
++from web2robot.robots.m7 import (
++    CONFIG as _M7, ENV_SPEC as _M7_ENV_SPEC, SAMPLE_CONFIG as _M7_SC,
++)
++
++_M7_ENV = RobotConfig(**_M7_ENV_SPEC)
++
  ROBOT_CONFIGS = {
      "g1":        _G1,
      "franka":    _FRANKA,
@@ -407,7 +424,7 @@ index 1d88a76..193e3fc 100644
  }
  
  SAMPLE_CONFIGS = {
-@@ -35,6 +38,7 @@ SAMPLE_CONFIGS = {
+@@ -35,6 +53,7 @@ SAMPLE_CONFIGS = {
      "franka":    _FRANKA_SC,
      "robonaut2": _ROBONAUT2_SC,
      "xlerobot":  _XLEROBOT_SC,
@@ -415,7 +432,7 @@ index 1d88a76..193e3fc 100644
  }
  
  ENV_CONFIGS = {
-@@ -42,4 +46,5 @@ ENV_CONFIGS = {
+@@ -42,4 +61,5 @@ ENV_CONFIGS = {
      "franka":    _FRANKA_ENV,
      "robonaut2": _ROBONAUT2_ENV,
      "xlerobot":  _XLEROBOT_ENV,

@@ -38,7 +38,16 @@ scripts/dev/check_handframe_convention.py  # 上面那条 hand_frame 约定，�
 ```
 """
 from web2robot.robots.m7.config import CONFIG, ENV_SPEC
-from web2robot.robots.m7.env import M7Env
+from web2robot.robots.m7.env import M7Env, _MJCF_PATH, _SCENE_PATH
 from web2robot.robots.m7.sample_config import SAMPLE_CONFIG
 
-__all__ = ["CONFIG", "ENV_SPEC", "M7Env", "SAMPLE_CONFIG"]
+#: 全身 MJCF（``assets/robots/m7/m7.xml``）。导出它是因为框架侧还有第二处需要它：
+#: 上游 ``kinematics/wrist_ik.py`` 的 ``RobotIKConfig.m7`` 要拿它建 IK 串链
+#: （pytorch_kinematics）。别让框架侧自己拼路径 —— 迁移时正是那一处 ``_ROBOTS_DIR /
+#: "m7" / "m7.xml"`` 因为不含 "robots/m7" 字样躲过了 grep，删掉旧目录后端到端当场
+#: FileNotFoundError。由 ``tests/test_m7_robot.py::TestUpstreamAssetPaths`` 钉住。
+MJCF_PATH  = _MJCF_PATH
+#: 带地面/光照的场景（``m7_scene.xml``），渲染与 hand_frame 检查用。
+SCENE_PATH = _SCENE_PATH
+
+__all__ = ["CONFIG", "ENV_SPEC", "M7Env", "SAMPLE_CONFIG", "MJCF_PATH", "SCENE_PATH"]

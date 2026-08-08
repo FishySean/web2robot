@@ -5,12 +5,16 @@ borrowed root model) so both hands are held out in front, clearly visible.
 Only the FINGERS animate, driven by the real per-frame retargeted trajectory.
 Two synced views: full-body front (left) + tight hands close-up (right).
 """
-from pathlib import Path
 import numpy as np, mujoco, imageio.v2 as imageio
+
+from _devcli import parser, load_traj
 from web2robot.robots.m7.env import M7Env
 
-OUT = Path("/mnt/vlm/fanshaoheng/phase1_repro/m7_test_out")
-tr = np.load(OUT / "trajectory.npz", allow_pickle=True)
+p = parser(__doc__)
+p.add_argument("--frames", type=int, nargs="+", default=[0, 30, 60],
+               help="额外抽这几帧存 PNG")
+args = p.parse_args()
+tr, OUT = load_traj(args)
 qLf, qRf = tr["q_left_fingers"], tr["q_right_fingers"]
 Ln = [str(x) for x in tr["left_finger_joint_names"]]
 Rn = [str(x) for x in tr["right_finger_joint_names"]]
@@ -47,5 +51,5 @@ out = OUT / "m7_robot_sim_fingers.mp4"
 imageio.mimsave(out, frames, fps=fps, codec="libx264")
 print(f"wrote {out} ({T} frames @ {fps}fps, codec h264)")
 for f in [10, 30, 50]:
-    imageio.imwrite(f"/tmp/sim_{f}.png", frames[f])
-print("saved /tmp/sim_10/30/50.png")
+    imageio.imwrite(OUT / f"sim_{f}.png", frames[f])
+print(f"saved {OUT}/sim_*.png")

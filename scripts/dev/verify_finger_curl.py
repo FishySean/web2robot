@@ -4,12 +4,12 @@
 (2) apply frame-30 right-hand values, READ BACK qpos to prove they're not zeroed
 (3) render right hand: all-zeros (open) vs frame-30 (should be a grip), side by side
 """
-from pathlib import Path
 import numpy as np, mujoco, imageio.v2 as imageio
+
+from _devcli import parser, load_traj
 from web2robot.robots.m7.env import M7Env
 
-OUT = Path("/mnt/vlm/fanshaoheng/phase1_repro/m7_test_out")
-tr = np.load(OUT / "trajectory.npz", allow_pickle=True)
+tr, OUT = load_traj(parser(__doc__).parse_args())
 qRf = tr["q_right_fingers"]; Rn = [str(x) for x in tr["right_finger_joint_names"]]
 print("trajectory.npz right finger names:", Rn)
 print("frame30 values:", np.round(qRf[30], 2))
@@ -42,5 +42,5 @@ for label, vals in [("OPEN(zeros)", np.zeros(12)), ("frame30(data)", qRf[30])]:
     mujoco.mj_forward(m, d)
     R.update_scene(d, cam(d.xpos[env._body_ids["right"]]))
     imgs.append(R.render().copy())
-imageio.imwrite("/tmp/finger_open_vs_grip.png", np.concatenate(imgs, axis=1))
-print("saved /tmp/finger_open_vs_grip.png  (left=open, right=frame30 data)")
+imageio.imwrite(OUT / "finger_open_vs_grip.png", np.concatenate(imgs, axis=1))
+print(f"saved {OUT}/finger_open_vs_grip.png  (left=open, right=frame30 data)")

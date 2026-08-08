@@ -1,6 +1,6 @@
-"""M7 机器人定义的三条不变量。
+"""M7 机器人定义的四条不变量。
 
-这三条都是"只靠人看看不住"的性质，所以写成测试：
+这四条都是"只靠人看看不住"的性质，所以写成测试：
 
 1. **接口一致性** —— ``M7Env`` 不再继承上游 ``sim.base_env.BaseEnv``（那会把机器人
    定义焊死在 EgoInfinity 的目录结构上），于是丢了"忘实现某个方法 → 实例化时
@@ -17,6 +17,9 @@
 3. **sample_config 的比例参数**是按 M7 实际比例重算过的，不是抄 R2 的。抄来的
    肘 jitter (-1.6,-0.3) 会把 M7 的肘压死在 [-2.36,-1.30]（永不伸展）。钉住数值，
    免得谁"统一一下各机器人的配置"时又抄回去。
+
+4. **上游指向 M7 资产的路径必须真的存在** —— 拼接出来的路径 grep 不到，删旧目录时
+   会漏。见 ``TestUpstreamAssetPaths`` 里的说明。
 
 跑法::
 
@@ -166,6 +169,50 @@ print("ok")
         r = _run(code)
         self.assertEqual(r.returncode, 0, r.stderr[-2000:])
         self.assertIn("ok", r.stdout)
+
+
+class TestUpstreamAssetPaths(unittest.TestCase):
+    """上游那边每一处指向 M7 资产的路径，都必须真的存在。
+
+    这条是拿代价换来的（2026-08-09）：迁移时我用 ``grep -rn "robots\\.m7\\|robots/m7"``
+    找上游的引用，漏掉了 ``kinematics/wrist_ik.py`` 里的
+    ``_ROBOTS_DIR / "m7" / "m7.xml"`` —— 路径是**拼出来的**，源码里根本没有
+    "robots/m7" 这个字样。删掉上游旧目录后，端到端在建 IK 串链时当场
+    ``FileNotFoundError``，而迁移完成前跑的那次端到端是绿的（那会儿旧目录还在，
+    它悄悄用的是旧文件）。
+
+    所以这里不靠 grep，靠**把 config 造出来看路径存不存在** —— 拼接的路径也躲不掉。
+    """
+
+    def test_ik_config_mjcf_exists(self):
+        code = r"""
+from kinematics.wrist_ik import RobotIKConfig
+from web2robot.robots.m7 import MJCF_PATH
+
+for side in ("left", "right"):
+    cfg = RobotIKConfig.m7(side)
+    assert cfg.mjcf_path.is_file(), f"{side}: IK 用的 MJCF 不存在 -> {cfg.mjcf_path}"
+    assert cfg.mjcf_path == MJCF_PATH, \
+        f"{side}: IK 走的不是我方资产 {cfg.mjcf_path} != {MJCF_PATH}"
+    # IK 串链的根/末端必须在这个 MJCF 里真的有
+    import mujoco
+    m = mujoco.MjModel.from_xml_path(str(cfg.mjcf_path))
+    for link in (cfg.root_link_name, cfg.end_link_name):
+        assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, link) >= 0, \
+            f"{side}: MJCF 里没有 body {link}"
+print("ok")
+"""
+        r = _run(code)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        self.assertIn("ok", r.stdout)
+
+    def test_no_stale_m7_paths_left_upstream(self):
+        """上游不该再有指向已删目录的 m7 资产路径，也不该留重复的 m7 脚本副本。"""
+        up = _upstream()
+        stale = [p for p in ((up / "robots" / "m7"), (up / "sim" / "robots" / "m7"),
+                             (up / "scripts" / "generate_m7_mjx.py"))
+                 if p.exists()]
+        self.assertEqual(stale, [], f"上游残留（应已迁到 web2robot）: {stale}")
 
 
 if __name__ == "__main__":

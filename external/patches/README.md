@@ -14,8 +14,8 @@ numpy / mujoco / scipy，**零上游 import**；`test.py` 那 +190 行的 diff �
 
 ## egoinfinity-modified.patch
 
-2026-08-07 重新从 `EgoInfinity` 工作区导出，覆盖 6 个被改过的**已跟踪**文件
-（6 files changed, 284 insertions(+), 15 deletions(-)，27104 字节）。
+2026-08-09 重新从 `EgoInfinity` 工作区导出，覆盖 6 个被改过的**已跟踪**文件
+（6 files changed, 307 insertions(+), 15 deletions(-)，28232 字节）。
 
 ```bash
 cd external/EgoInfinity && git apply ../patches/egoinfinity-modified.patch
@@ -46,6 +46,34 @@ from utils.traj_cleanup import ...
 
 打这个 patch 的人要知道：`test.py` 需要 `web2robot/src` 在 `PYTHONPATH` 里才能跑，
 `scripts/s4_retarget.sh` 已经替你设好了。
+
+### 2026-08-09 又多了一处：`wrist_ik.py` 的 M7 MJCF 路径
+
+`robots/m7/` 迁移之后，上游 `kinematics/wrist_ik.py::RobotIKConfig.m7` 里那行
+
+```python
+mjcf_path = _ROBOTS_DIR / "m7" / "m7.xml"      # 指向已删除的上游目录
+    → from web2robot.robots.m7 import MJCF_PATH as _M7_MJCF
+      mjcf_path = _M7_MJCF
+```
+
+必须改，否则建 IK 串链时 `FileNotFoundError`。import 写在函数体里而不是模块顶层，
+是为了让 g1/r2/franka 这些**上游自带的**机器人在没有 web2robot 的环境里也能 import
+这个模块 —— 只有真要 M7 时才要求我方包在 path 上。
+
+**这一处是被端到端跑出来的，不是看代码看出来的**，值得记一笔：迁移时我用
+`grep -rn "robots\.m7\|robots/m7"` 找上游对 M7 的引用，而这行路径是**拼**出来的
+（`_ROBOTS_DIR / "m7" / "m7.xml"`），源码里压根没有 `robots/m7` 这个字样，于是躲过了
+grep。更麻烦的是：删上游旧目录**之前**跑的那次端到端是绿的 —— 那会儿旧文件还在，
+它悄悄读的是旧文件。所以"删除后必须再跑一次端到端"这一步不是形式，它是唯一能发现
+这类漏网的手段。同一次 grep 还漏了 `scripts/generate_m7_mjx.py`（它写的是
+`Path(__file__).parents[1] / "robots" / "m7"`），那份重复副本也已删除。
+
+现在这两件事都由 `tests/test_m7_robot.py::TestUpstreamAssetPaths` 钉住：它不 grep，
+而是**把 IK config 造出来看 `mjcf_path` 存不存在**，拼接的路径也躲不掉；另一个用例
+断言上游不再残留 `robots/m7/`、`sim/robots/m7/`、`scripts/generate_m7_mjx.py`。
+（把修复临时改回旧路径验证过：测试确实变红，报的就是端到端那条
+`FileNotFoundError` 的同一个路径。）
 
 ## _pre_migration_snapshot/ —— 临时保险，迁移完成后可以从最新提交里删掉
 
