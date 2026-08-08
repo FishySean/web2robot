@@ -48,7 +48,7 @@ def load_input():
 
 def robot_cfg():
     import importlib
-    return importlib.import_module("sim.robots.m7.config").CONFIG
+    return importlib.import_module("web2robot.robots.m7.config").CONFIG
 
 
 def compare(name, a, b):
