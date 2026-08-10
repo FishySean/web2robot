@@ -131,6 +131,39 @@ class Paths:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    def check_output_dir(self, path: Union[str, Path]) -> Path:
+        """校验一个产物目录：解析成绝对路径，并拒绝落在 ``external/`` 里面。
+
+        为什么要有这条硬规矩：**上游 ``test.py`` 的 ``--out`` 默认值是
+        ``<clip_parent>/<robot>/``** —— 也就是"把产物写在输入素材旁边"。而我们的
+        薄壳必须 ``cd`` 到上游目录（它的 config / checkpoint 路径都是相对自己算的），
+        于是任何相对的 ``--out`` 也一起落进 ``external/``。两件事叠起来的结果是实测
+        出来的：`external/EgoInfinity/retarget/` 下攒了 408 MB、243 个 mp4/npz，
+        其中上游 git 只跟踪 1 个 —— 其余全是我们跑的，而 ``outputs/`` 几乎是空的。
+
+        这很危险，不只是乱：``external/`` 是第三方 checkout，一次 ``git clean -xdf``
+        或重新 clone 就把我们的结果全带走；而且产物和输入素材混在一起之后，
+        "哪份是官方素材、哪份是我们跑的"只能靠 mtime 猜。
+
+        所以这条和"``src/`` 里不许有绝对路径字面量"同级：写成代码里的检查 + 测试，
+        而不是写在文档里 —— 约定会被下一次赶工悄悄破掉，检查不会。
+        """
+        p = Path(path)
+        p = p if p.is_absolute() else (Path.cwd() / p)
+        p = Path(os.path.normpath(p))
+        for key in ("egoinfinity", "hawor"):
+            try:
+                ext = self.root(key)
+            except FileNotFoundError:
+                continue
+            if p == ext or str(p).startswith(str(ext) + os.sep):
+                raise SystemExit(
+                    f"产物目录不能落在第三方仓库里：{p}\n"
+                    f"  它在 {ext} 下面 —— external/ 是第三方 checkout，"
+                    f"一次 git clean 就会把结果带走。\n"
+                    f"  请写成 outputs/ 下的路径，或给绝对路径（/tmp 也行）。")
+        return p
+
     def torch_home(self) -> Path:
         """torchvision 权重缓存目录。
 

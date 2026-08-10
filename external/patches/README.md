@@ -14,8 +14,8 @@ numpy / mujoco / scipy，**零上游 import**；`test.py` 那 +190 行的 diff �
 
 ## egoinfinity-modified.patch
 
-2026-08-09 重新从 `EgoInfinity` 工作区导出，覆盖 6 个被改过的**已跟踪**文件
-（6 files changed, 307 insertions(+), 15 deletions(-)，28232 字节）。
+2026-08-10 重新从 `EgoInfinity` 工作区导出，覆盖 6 个被改过的**已跟踪**文件
+（6 files changed, 313 insertions(+), 15 deletions(-)，28982 字节）。
 
 ```bash
 cd external/EgoInfinity && git apply ../patches/egoinfinity-modified.patch
@@ -89,3 +89,17 @@ grep。更麻烦的是：删上游旧目录**之前**跑的那次端到端是绿
 留着是因为迁移还没做完；`collision/`、`trajectory/` 已于 2026-08-07 迁完并各自跑过验证，
 等 `robots/m7/`、`retarget/`、`perception/` 也迁完之后，这个目录就可以从最新提交里移除
 （内容仍在 git 历史里，随时 `git show` 取回）。
+
+### 2026-08-10 再多一处：`test.py` 的 `--out` 落点兜底
+
+上游 `--out` 的默认值是 `clip_path.parent / robot_name`，也就是**把产物写在输入素材
+旁边** —— 素材在 `external/` 里，于是产物也进了 `external/`（实测攒了 408 MB / 243 个
+mp4+npz，上游 git 只跟踪其中 1 个）。薄壳 `scripts/s4_retarget.sh` 已经顶掉这个默认值，
+patch 里再兜一道，防止有人绕过薄壳直接跑 `test.py`：
+
+```python
+out_dir = Path(args.out).resolve() if args.out else clip_path.parent / robot_name
+    → 后面接一行 out_dir = P.check_output_dir(out_dir)   # 落在 external/ 里就 SystemExit
+```
+
+同样的判据有测试钉着：`tests/test_outputs_not_in_external.py`。

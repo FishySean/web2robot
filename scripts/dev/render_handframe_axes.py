@@ -8,17 +8,28 @@ Axis colors: X=red (thumb side), Y=green (finger dir), Z=blue (palm normal).
 **左手蓝箭头朝外、右手蓝箭头朝反方向**，绿箭头两只手同向。
 数值版的判据在 ``check_handframe_convention.py``（两只手都验 + 拿 g1/r2 当参照）。
 
-用法（clip 名是 ``runs/m7/validation/`` 下的目录，相对上游 retarget/）::
+用法（``run_dir`` 是一次 ``s4_retarget.sh`` 的输出目录）::
 
-    scripts/dev/m7_tool.sh render_handframe_axes.py fill_jar
+    scripts/dev/m7_tool.sh render_handframe_axes.py outputs/legacy_runs/runs/m7/validation/fill_jar
+
+2026-08-10 修：这个脚本原本吃**片段名**、自己拼 ``runs/m7/validation/{clip}/``，
+而 ``m7_tool.sh`` 会 cd 到上游 retarget/ —— 于是产物直接写进第三方 checkout 里。
+上一轮把另外 5 个出片脚本改成 ``run_dir`` + ``--out`` 时漏了这一个（只改了注释），
+渲出来的 ``robot_sim_axes_h264.mp4`` 就落在了 ``external/`` 下。现在统一走
+``_devcli``，产物目录一律过 ``P.check_output_dir``。
 """
-import numpy as np, mujoco, cv2, os, sys
+import os
+
+import numpy as np, mujoco, cv2
+
+from _devcli import parser, load_traj
 from web2robot.robots.m7.config import CONFIG as M7
 from web2robot.robots.m7.env import M7Env
 
 
-def render_with_axes(clip, out_path, L=0.12, H=540, W=960):
-    d = np.load(f"runs/m7/validation/{clip}/trajectory.npz", allow_pickle=True)
+def render_with_axes(d, out_path, L=0.12, H=540, W=960):
+    label = out_path.parent.name
+    out_path = str(out_path)
     qL, qR = d["q_left"], d["q_right"]
     QLf, QRf = d["q_left_fingers"], d["q_right_fingers"]
     fj = [n.replace("left_", "").replace("_joint", "") for n in d["left_finger_joint_names"]]
@@ -54,7 +65,7 @@ def render_with_axes(clip, out_path, L=0.12, H=540, W=960):
         img = r.render()[:, :, ::-1].copy()
         cv2.putText(img, "X=thumb(red) Y=finger(green) Z=palm-normal(blue)",
                     (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.putText(img, f"{clip} f{t}", (15, H - 15),
+        cv2.putText(img, f"{label} f{t}", (15, H - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         vw.write(img)
     r.close(); vw.release()
@@ -64,5 +75,6 @@ def render_with_axes(clip, out_path, L=0.12, H=540, W=960):
 
 
 if __name__ == "__main__":
-    for clip in (sys.argv[1:] or ["sip_coffee", "fill_jar"]):
-        render_with_axes(clip, f"runs/m7/validation/{clip}/robot_sim_axes_h264.mp4")
+    args = parser(__doc__).parse_args()
+    tr, OUT = load_traj(args)
+    render_with_axes(tr, OUT / "robot_sim_axes_h264.mp4")

@@ -111,10 +111,23 @@ index 2d8dc8c..a08460b 100644
      def xlerobot(side: str) -> "RobotIKConfig":
          """XLeRobot 5-DoF SO-ARM100 arm (Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll)."""
 diff --git a/retarget/scripts/test.py b/retarget/scripts/test.py
-index f8f1b5f..0254309 100644
+index f8f1b5f..e208852 100644
 --- a/retarget/scripts/test.py
 +++ b/retarget/scripts/test.py
-@@ -151,6 +151,35 @@ def run(args: argparse.Namespace) -> None:
+@@ -130,6 +130,12 @@ def run(args: argparse.Namespace) -> None:
+     clip_path  = Path(args.clip).resolve()
+     robot_name = args.robot
+     out_dir    = Path(args.out).resolve() if args.out else clip_path.parent / robot_name
++    # web2robot: 上面那个默认值 clip_path.parent/<robot> 会把产物写在输入素材旁边，
++    # 也就是第三方 checkout 里（实测攒了 408 MB，一次 git clean 就没了）。
++    # 薄壳 scripts/s4_retarget.sh 会顶掉这个默认值；这里再兜一道，直接调用方
++    # 手动给了 external/ 内的 --out 也拦住。
++    from web2robot.paths import P
++    out_dir    = P.check_output_dir(out_dir)
+     out_dir.mkdir(parents=True, exist_ok=True)
+ 
+     print(f"Clip : {clip_path}")
+@@ -151,6 +157,35 @@ def run(args: argparse.Namespace) -> None:
      if left_cam_np is None or right_cam_np is None:
          raise RuntimeError("Clip is missing both-hand tracking data.")
  
@@ -150,7 +163,7 @@ index f8f1b5f..0254309 100644
      vid_frames = load_video_frames(clip_path / "depth.mp4")
      vid_h, vid_w = (vid_frames[0].shape[:2] if vid_frames else (480, 640))
      K = {"fx": seq.focal, "fy": seq.focal,
-@@ -189,14 +218,10 @@ def run(args: argparse.Namespace) -> None:
+@@ -189,14 +224,10 @@ def run(args: argparse.Namespace) -> None:
          left_cam_ik  = left_cam_np
          right_cam_ik = right_cam_np
  
@@ -166,7 +179,7 @@ index f8f1b5f..0254309 100644
      _wsc           = _robot_cfg.get("workspace_center")
      _ik_robot_name = _robot_cfg["ik_robot"]
      _null_man      = 0.5 if robot_name == "franka" else 0.1
-@@ -213,10 +238,29 @@ def run(args: argparse.Namespace) -> None:
+@@ -213,10 +244,29 @@ def run(args: argparse.Namespace) -> None:
          null_weight_smo=_null_smo,
      )
  
@@ -200,7 +213,7 @@ index f8f1b5f..0254309 100644
      R_global, t_global = R_anchor, t_anchor
  
      print(f"  anchor t={t_anchor.round(3)}  "
-@@ -285,6 +329,32 @@ def run(args: argparse.Namespace) -> None:
+@@ -285,6 +335,32 @@ def run(args: argparse.Namespace) -> None:
              q_left  = uniform_filter1d(q_left,  size=_w, axis=0, origin=-(_w//2))
              q_right = uniform_filter1d(q_right, size=_w, axis=0, origin=-(_w//2))
  
@@ -233,7 +246,7 @@ index f8f1b5f..0254309 100644
      # Finger retargeting
      Q_lf = Q_rf = None
      finger_jnames: list[str] = []
-@@ -312,6 +382,41 @@ def run(args: argparse.Namespace) -> None:
+@@ -312,6 +388,41 @@ def run(args: argparse.Namespace) -> None:
              elif last is not None: Q_rf[t] = last
          finger_jnames = finger_jnames or rt_r.joint_names
  
@@ -275,7 +288,7 @@ index f8f1b5f..0254309 100644
      # Build env for joint names + rendering
      scene_path = _robot_cfg.get("scene_path_fingers", _robot_cfg["scene_path"])
      env_vis = _robot_cfg["env_cls"](
-@@ -350,6 +455,14 @@ def run(args: argparse.Namespace) -> None:
+@@ -350,6 +461,14 @@ def run(args: argparse.Namespace) -> None:
              draw_hand_keypoints(img, all_right_j[t], K, (0, 100, 220))
          cv2.putText(img, f"{t+1}/{seq_len}  {robot_name}  a={args.torso_alpha:.2f}",
                      (8, vid_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
@@ -290,7 +303,7 @@ index f8f1b5f..0254309 100644
          input_frames.append(img)
  
      robot_frames = render_robot_sim(
-@@ -359,7 +472,9 @@ def run(args: argparse.Namespace) -> None:
+@@ -359,7 +478,9 @@ def run(args: argparse.Namespace) -> None:
      save_trajectory(out_dir / "trajectory.npz",
                       q_left, q_right, Q_lf, Q_rf,
                       l_jnames, r_jnames, finger_jnames,
@@ -301,7 +314,7 @@ index f8f1b5f..0254309 100644
      np.savez(out_dir / "root_frames.npz",
               R_per_frame=R_per_frame.astype(np.float32),
               t_per_frame=t_per_frame.astype(np.float32),
-@@ -425,7 +540,7 @@ def _parse() -> argparse.Namespace:
+@@ -425,7 +546,7 @@ def _parse() -> argparse.Namespace:
  
      # ── I/O ───────────────────────────────────────────────────────────────────
      p.add_argument("--robot",  default="g1",
@@ -310,7 +323,7 @@ index f8f1b5f..0254309 100644
                     help="Target robot to retarget to.")
      p.add_argument("--ckpt",   default=None, metavar="PATH",
                     help="Path to model checkpoint. "
-@@ -447,6 +562,17 @@ def _parse() -> argparse.Namespace:
+@@ -447,6 +568,17 @@ def _parse() -> argparse.Namespace:
      p.add_argument("--n_clusters",         type=int,   default=5,
                     help="Number of SE(3) K-medoids clusters used to find the "
                          "best root anchor from all window estimates.")
@@ -328,7 +341,7 @@ index f8f1b5f..0254309 100644
      p.add_argument("--torso_alpha",        type=float, default=0.3,
                     help="Translation blend weight between the global anchor "
                          "(0) and the per-window estimate (1). Lower values "
-@@ -471,6 +597,48 @@ def _parse() -> argparse.Namespace:
+@@ -471,6 +603,48 @@ def _parse() -> argparse.Namespace:
      p.add_argument("--self_collision", action="store_true",
                     help="Run gradient-based self-collision post-processing "
                          "(CollisionFilter) on the final joint trajectory.")

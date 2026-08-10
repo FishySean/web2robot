@@ -17,6 +17,12 @@ roots:
   # 归档：重构前的探索性目录，只读留档
   archive_hand_projects: ../hand_projects
   archive_phase1_repro:  ../phase1_repro
+  # 官方源片段（EgoInfinity 自带的 examples/，属于第三方 checkout 的数据目录）。
+  # 每个片段是 4 个输入文件：depth.mp4 / hand_joints.bin / hand_meta.json / scene.json。
+  # 注册在这里是为了**代码不再用相对路径引它** —— 上游的路径都是相对
+  # retarget/ 算的，薄壳一 cd 进去，我们的 --out 也会跟着落在里面（见
+  # paths.py::check_output_dir 里记的 408 MB 那件事）。
+  egoinfinity_clips: external/EgoInfinity/retarget/examples
 
 envs:
   # 三个 venv 是 symlink，实体在旧目录（21 GB / 14 万文件，不可搬移：
@@ -34,6 +40,11 @@ weights:
     - external/EgoInfinity/pretrained_models/detector.pt
   wilor_ckpt:   external/EgoInfinity/pretrained_models/wilor_final.ckpt
   wilor_config: external/EgoInfinity/configs/wilor_model_config.yaml
+  # M7 根模型（root frame 的流匹配模型）—— 重定向的**输入**，不是产物。
+  # 它躺在 external/ 下是因为上游 train.py 把训练 run 写进自己的 runs/：
+  # runs/m7/taskspace_v2/ = checkpoints + tfevents + train.log。留在原地，
+  # 但代码通过这个键取，不再写 `--ckpt runs/m7/...` 这种相对路径。
+  m7_root_model: external/EgoInfinity/retarget/runs/m7/taskspace_v2/checkpoints/final.pt
   # torchvision 下载 KeypointRCNN 权重的落地点
   # （共享机器上别用默认 ~/.cache，别人也在用同一个 HOME）
   torch_home:   assets/weights
@@ -48,3 +59,8 @@ assets:
 data:
   videos:  data/videos     # symlink -> hand_projects/hand2robot/videos
   outputs: outputs
+  # 重定向产物的落点。上游 test.py 的 --out 默认值是 <clip_parent>/<robot>/
+  # ——"把产物写在输入素材旁边"——薄壳会用这个目录顶掉那个默认值。
+  retarget_out: outputs/retarget
+  # 2026-08-10 从 external/ 搬出来的存量产物，保持原相对路径，见其中的 MANIFEST.tsv
+  legacy_runs:  outputs/legacy_runs

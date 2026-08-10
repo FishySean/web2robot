@@ -22,7 +22,7 @@ robots mirror their palm normal.  Never verify one side only.
 用法（``m7_tool.sh`` 会 cd 到上游 ``retarget/``，所以 run_dir 可以写相对路径）::
 
     scripts/dev/m7_tool.sh check_handframe_convention.py
-    scripts/dev/m7_tool.sh check_handframe_convention.py --traj runs/m7/validation/fill_jar
+    scripts/dev/m7_tool.sh check_handframe_convention.py --traj outputs/legacy_runs/runs/m7/validation/fill_jar
 """
 import argparse
 from pathlib import Path

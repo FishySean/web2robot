@@ -29,7 +29,7 @@
 | `envs/` | 三个 venv 的 symlink + `requirements-*.txt` 依赖清单 |
 | `assets/robots/m7/` | M7 的 MJCF / URDF / mesh（我们自己产出的资产，进 git） |
 | `tests/` | stdlib unittest（秒级）+ `tests/regression/` 回归基准 |
-| `data/` `outputs/` | 素材与产物，都不进 git |
+| `data/` `outputs/` | 素材与产物，都不进 git。**产物只许落这里**，不许落 `external/` |
 
 ## 跑起来
 
@@ -39,7 +39,7 @@
 scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --viz outputs/ev/
 
 # ④重定向 + ⑤碰撞纠正（上游 EgoInfinity 主流程，碰撞/清洗逻辑走我方包）
-scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/fill_jar \
+scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_jar \
     --ckpt runs/m7/taskspace_v2/checkpoints/final.pt --seed 0 --n_samples 5 \
     --arm_torso_collision --dual_hand_collision
 ```
@@ -48,7 +48,7 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/fill_jar \
 而这是**共享机器，不要往里装包**。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，18/18
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，27/27
 ```
 
 ## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
@@ -121,8 +121,10 @@ scripts/dev/m7_tool.sh verify_m7_mjx_fk.py            # 期望 0.0000 mm / 0.000
 scripts/dev/m7_tool.sh check_handframe_convention.py  # 期望 m7 左手 finger=+y thumb=-x palm=+z，右手镜像
 
 # 再加一档：拿一段真实重定向轨迹逐帧验，而不是只验资产里写死的 home 姿态
-scripts/dev/m7_tool.sh check_handframe_convention.py --traj runs/m7/validation/fill_jar
+scripts/dev/m7_tool.sh check_handframe_convention.py \
+    --traj outputs/legacy_runs/runs/m7/validation/fill_jar
 #   期望 "违反约定的帧: 0/216 ✓"，且两只手整段各只出现过一种轴向组合
+#   （--traj 要给绝对路径或相对**上游 retarget/** 的路径，m7_tool.sh 会 cd 过去）
 ```
 
 **`hand_frame` 的轴向是 finger+y / thumb−x / palm+z（左手），右手镜像。**
@@ -136,6 +138,45 @@ scripts/dev/m7_tool.sh check_handframe_convention.py --traj runs/m7/validation/f
 
 `m7_mjx.xml` 是生成物（`scripts/dev/generate_m7_mjx.py`），但**重跑生成器不会得到逐位
 相同的文件** —— 原因和处置写在那个脚本的头部注释里，动它之前先看。
+
+## 产物只许落 `outputs/`，不许落 `external/`
+
+这条和"`src/` 里不许有绝对路径字面量"同级，理由同样是量出来的：
+
+**上游 `test.py` 的 `--out` 默认值是 `<clip_parent>/<robot>/`** —— 把产物写在输入素材旁边。
+再叠上薄壳**必须** `cd` 到上游 `retarget/`（它的 config / checkpoint 路径都是相对自己算的），
+于是任何相对的 `--out` 也一起落进去。两件事一叠，实测结果是 `external/EgoInfinity/retarget/`
+下攒了 408 MB、243 个 mp4/npz，而上游 git 只跟踪其中 1 个 —— 其余全是我们跑的；
+同期 `outputs/` 里只有一个目录。
+
+危害不只是乱：`external/` 是第三方 checkout，一次 `git clean -xdf` 或重新 clone
+就把结果全带走 —— **这正是这次重构最初的动因**；而且产物和素材混在同一棵树里之后，
+"哪份是官方素材、哪份是我们跑的"只能靠 mtime 猜。
+
+所以判据写成了代码，不是文档：
+
+```python
+P.check_output_dir(path)     # 解析相对路径 + 拒绝 external/ 内的落点，违反就 SystemExit
+```
+
+四个写入口都过这道闸：`s4_retarget.sh`（cd **之前**把 `--out` 按调用方 cwd 转绝对路径，
+没给就顶掉上游默认值，落 `outputs/retarget/<片段名>/`）、上游 `test.py`（兜底）、
+`scripts/dev/_devcli.py`（默认落 `outputs/dev/<run 名>/`，7 个出片脚本共用）、以及
+`scripts/dev/render_compare_grid.py`（自己一套 `--runs` / `--out`，因为它要同时读三台
+机器人的 run）。`tests/test_outputs_not_in_external.py` 钉住结果：判据不是"数 mp4"，
+而是**上游 git 认不认** —— 含 `robot_sim.mp4`/`trajectory.npz` 又不被上游跟踪的目录，
+就是我们的产物躺在别人家里。
+
+`external/` 下现在只剩输入：每个片段的 4 个输入文件（`depth.mp4` / `hand_joints.bin` /
+`hand_meta.json` / `scene.json`）和 `runs/m7/taskspace*/`（训练 run + checkpoint，
+上游 `train.py` 写在那里）。两者都已在 `configs/paths.yaml` 注册
+（`roots.egoinfinity_clips` / `weights.m7_root_model`），代码不再用相对路径引它们。
+
+2026-08-10 搬出来的 316 MiB 存量产物在 `outputs/legacy_runs/`，**保持原相对路径、
+没有重命名或重组**，逐文件清单见 `outputs/legacy_runs/MANIFEST.tsv`。搬迁过程中撞到
+两个 root 拥有的 run 目录（早先有人用 root 跑过），`mv` 会 copy 成功但删不掉源 ——
+所以搬迁脚本改成"copy 完逐文件 md5 比对，比对通过才删源"，可重复跑。脚本本身留在
+`scripts/dev/move_legacy_outputs.py`（`--dry` 只看清单），现在再跑是"待处理 0 项"。
 
 ## 一条贯穿全流程的规矩：指标 ≠ 画面
 

@@ -14,6 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
+from web2robot.paths import P
+
 
 def parser(doc: str) -> argparse.ArgumentParser:
     """建一个带 ``run_dir`` / ``--out`` 的 parser；调用方再加自己的参数。"""
@@ -22,7 +24,7 @@ def parser(doc: str) -> argparse.ArgumentParser:
     p.add_argument("run_dir", type=Path,
                    help="s4_retarget.sh 的输出目录（里面要有 trajectory.npz）")
     p.add_argument("--out", type=Path, default=None,
-                   help="产物落地目录，默认就写回 run_dir")
+                   help="产物落地目录，默认 outputs/dev/<run_dir 目录名>/")
     return p
 
 
@@ -31,13 +33,19 @@ def load_traj(args):
 
     返回 ``(traj, out_dir)``。找不到 npz 就直接退出 —— 宁可当场报，也不要拿着
     一份别的实验的轨迹 render 出一张看起来"差不多对"的图。
+
+    产物目录的默认值**不再是 run_dir**：``m7_tool.sh`` 会 cd 到上游 retarget/，
+    而 run_dir 常常就指在上游里（存量结果、官方片段旁边的 run），写回去等于往
+    第三方 checkout 里堆产物。所以默认落 ``outputs/dev/<run_dir 名>/``，
+    并且不管默认还是显式给的 ``--out``，都过一遍 ``P.check_output_dir``。
     """
     npz = args.run_dir / "trajectory.npz"
     if not npz.is_file():
         raise SystemExit(f"找不到 {npz}\n"
                          f"run_dir 要指向 s4_retarget.sh 的输出目录，例如：\n"
                          f"  scripts/s4_retarget.sh examples/fill_jar --robot m7 "
-                         f"--out /tmp/fill_jar ...")
-    out = args.out or args.run_dir
+                         f"--out outputs/retarget/fill_jar ...")
+    out = args.out or (P.data("outputs") / "dev" / args.run_dir.resolve().name)
+    out = P.check_output_dir(out)
     out.mkdir(parents=True, exist_ok=True)
     return np.load(npz, allow_pickle=True), out
