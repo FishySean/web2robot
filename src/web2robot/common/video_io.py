@@ -96,3 +96,61 @@ def sample_pairs(path: str, n_pairs: int, lo: float = 0.08, hi: float = 0.92
             pairs.append((f1, f2))
     cap.release()
     return pairs
+
+
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp")
+
+
+def read_rgb_frames(path, fps: Optional[float] = None,
+                    max_frames: Optional[int] = None) -> Tuple[List[np.ndarray], float]:
+    """Every frame in order, as RGB. Returns (frames, fps). Video file or image dir.
+
+    Three deliberate differences from `sample_frames`, which the perception
+    frontends need and QC does not:
+
+    - **Sequential decode, not random seek.** Hand tracking needs consecutive
+      frames; keyframe-snapping would silently duplicate and drop frames.
+    - **RGB, not BGR.** Both WiLoR and MoGe want RGB. cv2 hands back BGR, and
+      feeding BGR to a hand detector degrades it quietly rather than failing.
+    - **Image directories too**, sorted by name — HO-3D and most extracted
+      datasets ship as `rgb/0000.jpg`.
+
+    `fps` resamples by nearest-frame stride (a clip at 30 fps asked for 15
+    keeps every other frame); the returned fps is what was actually produced,
+    not what was asked for, because the stride is an integer.
+    """
+    from pathlib import Path
+    p = Path(path)
+
+    if p.is_dir():
+        files = sorted(f for f in p.iterdir() if f.suffix.lower() in IMAGE_EXTS)
+        src_fps = fps or 30.0          # 图片目录没有帧率信息，只能由调用方给
+        step = 1
+        frames = []
+        for f in files[::step]:
+            im = cv2.imread(str(f))
+            if im is not None:
+                frames.append(cv2.cvtColor(im, cv2.COLOR_BGR2RGB))
+            if max_frames and len(frames) >= max_frames:
+                break
+        return frames, float(src_fps)
+
+    info = probe(str(p))
+    if not info.ok:
+        return [], 0.0
+    step = 1
+    if fps and info.fps > 0:
+        step = max(1, int(round(info.fps / fps)))
+    cap = cv2.VideoCapture(str(p))
+    frames, i = [], 0
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        if i % step == 0:
+            frames.append(cv2.cvtColor(f, cv2.COLOR_BGR2RGB))
+            if max_frames and len(frames) >= max_frames:
+                break
+        i += 1
+    cap.release()
+    return frames, (info.fps / step if info.fps > 0 else (fps or 0.0))

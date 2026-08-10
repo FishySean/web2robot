@@ -113,6 +113,30 @@ checkout 里的）已经删掉，逻辑进了 `src/web2robot/perception/{to_clip
 `external/HaWoR` 里还剩 68 MB 的 `webvid/`（我们爬的片段、抽帧、contact sheet）和
 34 个 `.log` —— 同一类"产物落在 external/ 里"的问题，但那是素材不是代码，单独处理。
 
+### 2026-08-10 `webvid/` 和日志清空：`external/HaWoR` 里再没有我们的散件
+
+`webvid/` 那 436 个文件按"能不能重新算出来"分了两处，目录本身已删除：
+
+| 去哪了 | 什么 | 数量 / 体积 |
+|---|---|---|
+| `data/webvid/raw/` | 6 段 mp4 + 1 段 mkv 原片，**手工找的，没有下载脚本可以重来** | 7 / 55 MB |
+| `outputs/archive/webvid_2026-07/` | 抽帧、contact sheet、demo 渲染，都能从上面 7 段重算 | 429 / 13 MB |
+
+`436 = 7 + 429` 对上了，6 个 mp4 搬家前后 md5 逐个核对 OK（清单在
+`data/webvid/raw/MANIFEST.md5`，`md5sum -c` 可随时复核）。
+
+34 个 `.log` 里有 3 个不是垃圾：`run_{abf12,smu41,mc4}.log` 记着 HaWoR **每段现估的
+度量尺度**（0.19 / 2.34 / 3.92，差 20 倍）和"focal 走默认 600"这两件事，而深度误差表
+的可复现性全靠它们。这 3 个压缩后（22 KB）进了
+`evidence/depth_benchmark_ho3d/provenance/`，压缩副本和原件 md5 逐个核对一致之后才删原件，
+数值本身由 `tests/test_depth_benchmark.py::TestProvenance` 钉住。其余 31 个（装环境、
+下权重、调试）删了 —— 它们记的是"环境怎么装起来的"，那件事该由 `envs/` 说清楚。
+
+还留在 `external/HaWoR` 里的只剩两样，都**不是散件**，故意留着：
+`example/`（1.3 GB，HaWoR 自己的 example 目录 + 各次运行的产物，freeze 脚本的旧复现路径
+指着它；证据已冻成 24 KB npz，所以它现在只是可选的重跑入口）和 `hawor_env/`（6.2 GB venv，
+`envs/hawor_env` 就是它的 symlink）。这两样要不要动是另一件事，不在这次范围里。
+
 ## _pre_migration_snapshot/ —— 临时保险，迁移完成后可以从最新提交里删掉
 
 重构开始前（2026-08-06）的一次性快照，防的是"一个 `git checkout .` 或 `git pull`

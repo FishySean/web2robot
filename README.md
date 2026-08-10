@@ -42,6 +42,7 @@ scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --viz outputs/ev/
 # ③感知前端产物 → EgoInfinity clip 目录（子命令一个前端一个，各自的 venv）
 scripts/s3_to_clip.sh hawor external/HaWoR/example/ho3d_SMu41 --frames 55 \
     --out outputs/clips/ho3d_SMu41 --fps 15 --hands right
+scripts/s3_to_clip.sh wilor data/webvid/raw/v1.mp4 --out outputs/clips/v1 --fps 15
 
 # ④重定向 + ⑤碰撞纠正（上游 EgoInfinity 主流程，碰撞/清洗逻辑走我方包）
 scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_jar \
@@ -53,7 +54,7 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_
 而这是**共享机器，不要往里装包**。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，75/75
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，119/119
 ```
 
 ## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
@@ -142,12 +143,13 @@ scripts/dev/render_compare_grid.py --runs ... --out outputs/dev/compare_grid_ret
 ## 改了感知前端之后（`src/web2robot/perception/`）
 
 分两层，因为变更理由不同：`to_clip.py` 是**下游的输入契约**（EgoInfinity clip 目录），
-跟用哪个前端无关；`hawor.py` 这类是一个前端一个。前端的函数（`run_mano` /
-`load_slam_cam`）是**参数注入**进来的，所以单测不需要 GPU、不需要 checkpoint、
-不需要第三方仓库。
+跟用哪个前端无关；`hawor.py` / `wilor.py` + `moge.py` 是一个前端一个。前端的函数
+（`run_mano` / `load_slam_cam` / WiLoR 的 `predict` / MoGe 的 `infer`）是**参数注入**
+进来的，所以单测不需要 GPU、不需要 checkpoint、不需要第三方仓库。
 
 ```bash
-envs/rt_env/bin/python -m unittest tests.test_perception_modules -v   # 20 个用例
+envs/rt_env/bin/python -m unittest tests.test_perception_modules -v   # HaWoR，20 个用例
+envs/rt_env/bin/python -m unittest tests.test_wilor_modules -v        # WiLoR+MoGe，40 个
 ```
 
 两处**错了不报错**的地方由测试钉住，都是实际会咬人的：
@@ -162,6 +164,37 @@ envs/rt_env/bin/python -m unittest tests.test_perception_modules -v   # 20 个�
 `trajectory/traj_cleanup.py` 正是靠 NaN 找空洞的。左手固定 slot 0、右手 slot 1，
 不压缩空 slot：上游按 slot 取手，压缩会让片段中途换手，IK 照样解得出来，几乎看不出来。
 
+### WiLoR+MoGe 这条前端（`wilor.py` + `moge.py`）
+
+它是**兜底**那条：HaWoR 靠 SLAM，条件不满足时整段失败；WiLoR 逐帧检测，从不崩溃只少
+检出几帧。代价是 WiLoR 自己没有度量深度，得外挂 MoGe，而这有两条历史实现，
+**各错一半**（ABF12 前 30 帧实测）：
+
+| | 骨长均值（真手 2~4cm） | 骨长逐帧变异（真手 ~0） |
+|---|---|---|
+| `--depth-mode pointmap` | 2.94 cm ✓ | 5.7% ✗ 手形被深度噪声撕开 |
+| `--depth-mode global-scale` | 0.45 cm ✗ 缩小约 6.5 倍 | 0.5% ✓ |
+
+所以**两条策略的"开合"数字不可比**，也都不能直接当结论用。想看图：
+
+```bash
+envs/perception_env/bin/python scripts/dev/viz_wilor_depth_modes.py \
+  --clips outputs/clips/<pointmap> outputs/clips/<globalscale> \
+  --rgb <图片目录> --out outputs/viz/wilor_depth_modes.mp4
+```
+
+三个必须知道的坑：
+
+1. **`sample_pointmap` 用 `round`，`sample_depth` 用 `int()` 截断** —— 差半个像素，
+   是从两个原脚本照抄的。"顺手统一"会改掉 `evidence/` 里 11.0 cm 那个数，而代码照样跑。
+   前者出画时给 NaN，后者会 clip 到边缘像素返回一个编出来的深度，也是故意保留的差异。
+2. **反投影必须用取整后的像素**（`pixel_index`）。深度是在整数像素处取的，用亚像素坐标
+   反投影得到的 XY 和深度不对应，误差只有半像素量级，肉眼和单测都容易放过去。
+3. **`HF_HOME` 必须覆盖**。这台机器的 shell 把它指向共享的 `/mnt/vlm/common/cache`
+   （我们没写权限），MoGe 权重其实缓存在 `$HOME/.cache/huggingface`。不覆盖会报
+   `PermissionError: .../models--Ruicheng--moge-2-vitl-normal` —— 看着像"权重没下载"，
+   其实是 hf_hub 想在只读目录里建缓存。`scripts/s3_to_clip.sh` 已经替你设了。
+
 ## 论文里的数字改了之后（`evidence/` + `src/web2robot/eval/`）
 
 `evidence/` 里放的是论文要引的实验证据，**进 git**，和 `outputs/` 的区别是它不一定
@@ -170,13 +203,23 @@ envs/rt_env/bin/python -m unittest tests.test_perception_modules -v   # 20 个�
 秒级可复核，每个数都有测试钉着。**
 
 ```bash
-envs/rt_env/bin/python -m unittest tests.test_depth_benchmark -v   # 15 个用例，0.2 秒
+envs/rt_env/bin/python -m unittest tests.test_depth_benchmark -v   # 19 个用例，0.3 秒
 envs/rt_env/bin/python scripts/dev/render_depth_benchmark_fig.py   # 重画汇总图
 ```
 
 这份测试的作用和别的不一样：它不防"代码改坏"，防的是**论文里的数字和仓库里的证据
 悄悄脱钩**。所以断言写的是具体数值不是"大于小于" —— 把中位偷偷改成均值，
 ABF12 的 11.0 会变 11.26、SMu41 的 3.5 会变 6.7，测试当场变红（验证过）。
+
+引用那张深度误差表的时候有两句话必须一起写上，都钉在 `TestProvenance` 里：
+
+- **HaWoR 的度量尺度是它每段现估的**，三条序列量到 0.19 / 2.34 / 3.92，差 20 倍。
+  重跑拿到别的尺度，整张表就会变 —— 先查尺度再怀疑别的。
+- **HaWoR 用的是默认 focal 600，WiLoR 那条用了 HO-3D 的真 `camMat`。** 也就是说
+  这份对比对 WiLoR 有利，而 WiLoR 仍差一个量级；方向因此更稳，但不能不提。
+
+出处（那三次运行的 stdout，22 KB）压在
+[`evidence/depth_benchmark_ho3d/provenance/`](evidence/depth_benchmark_ho3d/provenance/)。
 
 ## 改了 M7 的机器人定义（`src/web2robot/robots/m7/` 或 `assets/robots/m7/`）之后
 

@@ -15,9 +15,16 @@ envs/perception_env
 # external/ 是第三方仓库的 symlink（EgoInfinity / HaWoR）
 external/EgoInfinity
 external/HaWoR
-# data/ 是素材，体积大且可重新抓取
-data/*
+# data/ 是素材，体积大，不进 git
+# 但"素材可以重新抓取"这句对 data/webvid/ 不成立（手工挑的，没有下载脚本），
+# 所以说明它是什么、以及搬家时的 md5 清单，必须进 git —— 素材丢了至少还知道丢了什么
+# 注意这里是 data/** 而不是 data/*：后者把子目录本身也排除掉，git 就不会下去看，
+# 下面那几条 ! 例外根本轮不到生效（踩过一次）
+data/**
+!data/**/
 !data/.gitkeep
+!data/**/README.md
+!data/**/MANIFEST.md5
 
 # ---- 运行产物 ----
 outputs/

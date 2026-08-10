@@ -166,5 +166,55 @@ class TestTable(unittest.TestCase):
         self.assertNotIn("不可信", txt)
 
 
+class TestProvenance(unittest.TestCase):
+    """把 HaWoR 那三次运行的出处钉住 —— 尤其是它自己估的度量尺度。
+
+    这三个数是 "0.6 cm" 的前提：HaWoR 的尺度逐段现估，同一份权重换一段视频就是另一个数
+    （这里 0.19 / 2.34 / 3.92，差 20 倍）。重跑拿到别的尺度，深度误差表就一定跟着变。
+    所以尺度必须和结论一起被冻住，否则表和它的前提会悄悄脱钩。
+    """
+
+    SCALES = {"abf12": "0.1902507320046425",
+              "smu41": "3.923701286315918",
+              "mc4": "2.3423545360565186"}
+    PROV = (Path(__file__).resolve().parents[1]
+            / "evidence" / "depth_benchmark_ho3d" / "provenance")
+
+    def _log(self, seq):
+        import gzip
+        p = self.PROV / f"hawor_run_{seq}.log.gz"
+        self.assertTrue(p.is_file(), f"{p} 不在了 —— 出处日志别再被清理掉")
+        with gzip.open(p, "rt", errors="replace") as f:
+            return f.read()
+
+    def test_estimated_scale_matches_what_the_readme_claims(self):
+        for seq, want in self.SCALES.items():
+            with self.subTest(seq=seq):
+                self.assertIn(f"estimated scale: {want}", self._log(seq))
+
+    def test_readme_table_lists_the_same_scales(self):
+        """README 里的表和日志不许各说各话。"""
+        txt = (self.PROV / "README.md").read_text()
+        for seq, want in self.SCALES.items():
+            self.assertIn(want, txt, f"{seq} 的尺度在 README 表里对不上")
+
+    def test_hawor_ran_on_the_default_focal_not_the_true_intrinsics(self):
+        """这条是对比公平性的前提：HaWoR 用默认 600，WiLoR 用了 HO-3D 真 camMat。
+
+        也就是说这份对比对 WiLoR 有利，而 WiLoR 仍差一个量级 —— 引用这张表时
+        必须把这句话一起写上，否则会被合理地质疑"是不是给 HaWoR 喂了真内参"。
+        """
+        for seq in self.SCALES:
+            with self.subTest(seq=seq):
+                self.assertIn("use default 600", self._log(seq))
+
+    def test_the_nfr_in_the_log_matches_the_frozen_npz(self):
+        """日志里 SLAM 文件名带的帧数要和冻结数据的 nfr 对得上，否则冻的是另一次运行。"""
+        for seq in self.SCALES:
+            with self.subTest(seq=seq):
+                nfr = int(DB.load_bench(seq.upper() if seq != "smu41" else "SMu41")["nfr"])
+                self.assertIn(f"hawor_slam_w_scale_0_{nfr}.npz", self._log(seq))
+
+
 if __name__ == "__main__":
     unittest.main()
