@@ -63,10 +63,18 @@ def render_with_axes(d, out_path, L=0.12, H=540, W=960):
                 mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_ARROW, 0.006, p, tip)
                 scn.ngeom += 1
         img = r.render()[:, :, ::-1].copy()
-        cv2.putText(img, "X=thumb(red) Y=finger(green) Z=palm-normal(blue)",
-                    (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.putText(img, f"{label} f{t}", (15, H - 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # 白字打在 MuJoCo 的白背景上等于没写（2026-08-10 修）：图例和帧号都先铺一条
+        # 黑底，图例每个词再用它对应的箭头颜色，这样不看代码也知道哪根轴是哪根。
+        cv2.rectangle(img, (0, 0), (W, 34), (0, 0, 0), -1)
+        x = 12
+        for word, col in (("X=thumb", cols[0]), ("Y=finger", cols[1]),
+                          ("Z=palm-normal", cols[2])):
+            bgr = tuple(int(255 * c) for c in col[2::-1])   # RGBA(0-1) → BGR(0-255)
+            cv2.putText(img, word, (x, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.55, bgr, 2)
+            x += cv2.getTextSize(word, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0][0] + 14
+        cv2.rectangle(img, (0, H - 30), (W, H), (0, 0, 0), -1)
+        cv2.putText(img, f"{label} f{t}", (12, H - 9),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
         vw.write(img)
     r.close(); vw.release()
     os.system(f"ffmpeg -y -loglevel error -i {tmp} -c:v libx264 -pix_fmt yuv420p {out_path}")

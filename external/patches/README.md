@@ -14,8 +14,12 @@ numpy / mujoco / scipy，**零上游 import**；`test.py` 那 +190 行的 diff �
 
 ## egoinfinity-modified.patch
 
-2026-08-10 重新从 `EgoInfinity` 工作区导出，覆盖 6 个被改过的**已跟踪**文件
-（6 files changed, 313 insertions(+), 15 deletions(-)，28982 字节）。
+2026-08-10 `retarget/` 迁移后重新导出，覆盖 6 个被改过的**已跟踪**文件
+（6 files changed, 233 insertions(+), 15 deletions(-)，23926 字节）。
+
+**注意这个数字是往下走的**：上一版 313 insertions，这一版 233。迁移做对了的话
+patch 就该变小 —— 逻辑挪进 `src/web2robot/`，上游只剩接线。哪天它又开始变大，就是
+有人在往上游文件里写实质逻辑了。
 
 ```bash
 cd external/EgoInfinity && git apply ../patches/egoinfinity-modified.patch
@@ -74,6 +78,40 @@ grep。更麻烦的是：删上游旧目录**之前**跑的那次端到端是绿
 断言上游不再残留 `robots/m7/`、`sim/robots/m7/`、`scripts/generate_m7_mjx.py`。
 （把修复临时改回旧路径验证过：测试确实变红，报的就是端到端那条
 `FileNotFoundError` 的同一个路径。）
+
+### 2026-08-10 `retarget/` 迁移：patch 从 313 行缩到 233 行
+
+`test.py` 里原本内联的四段逻辑搬进了 `src/web2robot/`：
+
+| 搬走的 | 新家 |
+|---|---|
+| 手腕清洗＋三档补洞的调用编排 | `retarget/fallback.py` |
+| rest 姿态兜底、relax 松弛 | `retarget/fallback.py` |
+| best-of-N 锚点采样（含 per-sample seed 偏移） | `retarget/anchor.py` |
+| 叠字文案 | `retarget/fallback.py` |
+| M7 的 IK 链根/末端/关节限位 | `robots/m7/ik_config.py` |
+
+上游只留调用点。这也是为什么 `test.py` 的 diff 从 +190 变成 +151：**接线还在，肉没了**。
+
+`ik_config.py` 这一处顺手减了一份重复：链根/末端的 body 名（`waist_pitch_link` 等）
+原来在我方也写死了一遍，现在改成从 `robots/m7/config.py::CONFIG` 里取。理由是这类
+名字写死两份，改 MJCF 时必然漏一处，而漏了**不报错** —— pytorch_kinematics 会拿旧
+名字建一条空链，IK 全帧失败但不抛异常。改完用 `ik_spec()` 的 JSON md5
+（`29e67f03d53117b197087f6c4b6f5daa`）前后比对确认行为没变。
+
+### 2026-08-10 `perception/` 迁移：HaWoR 侧一行上游代码都没改
+
+`external/HaWoR` 的 `git status --porcelain | grep -v "^??"` 是**空的** —— 我们从来
+没改过 HaWoR 的任何已跟踪文件，所以它不需要 patch，一个字都不用记。
+
+我方那个寄生文件 `convert_hawor_to_clip.py`（未被上游 git 跟踪，就是我们塞进第三方
+checkout 里的）已经删掉，逻辑进了 `src/web2robot/perception/{to_clip,hawor}.py`。
+删之前先证明新模块**逐字节复现**它的三个产物
+（`hand_joints.bin` `783a7de5…` / `hand_meta.json` `353fb9a9…` / `scene.json` `5657ced0…`），
+备份也在 `_pre_migration_snapshot/hawor-ours.tar.gz` 里（`91bee7a9…`，删除前核对过）。
+
+`external/HaWoR` 里还剩 68 MB 的 `webvid/`（我们爬的片段、抽帧、contact sheet）和
+34 个 `.log` —— 同一类"产物落在 external/ 里"的问题，但那是素材不是代码，单独处理。
 
 ## _pre_migration_snapshot/ —— 临时保险，迁移完成后可以从最新提交里删掉
 

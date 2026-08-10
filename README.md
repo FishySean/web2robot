@@ -38,6 +38,10 @@
 ```bash
 scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --viz outputs/ev/
 
+# ③感知前端产物 → EgoInfinity clip 目录（子命令一个前端一个，各自的 venv）
+scripts/s3_to_clip.sh hawor external/HaWoR/example/ho3d_SMu41 --frames 55 \
+    --out outputs/clips/ho3d_SMu41 --fps 15 --hands right
+
 # ④重定向 + ⑤碰撞纠正（上游 EgoInfinity 主流程，碰撞/清洗逻辑走我方包）
 scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_jar \
     --ckpt runs/m7/taskspace_v2/checkpoints/final.pt --seed 0 --n_samples 5 \
@@ -48,7 +52,7 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_
 而这是**共享机器，不要往里装包**。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，27/27
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，60/60
 ```
 
 ## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
@@ -111,6 +115,51 @@ scripts/dev/render_quad.sh ...
 
 端到端之所以不能单独作为判据：上游锚点的随机性会把迁移带来的差异**掩盖或伪造**成
 几十度的关节角差 —— 第一次跑就被这个骗过，以为迁移改坏了 108°。
+
+## 改了重定向兜底 / 锚点采样之后（`src/web2robot/retarget/`）
+
+同样三条线，但这里多一个"参照物"的讲究：`tests/test_retarget_modules.py` 里
+`_old_*` 那几个函数是**迁移前 `test.py` 内联版的逐字复制，故意没整理**。整理它就等于
+把参照物改成了被测物，比对就不作数了 —— 文件头的注释写着"勿整理"，请当真。
+
+```bash
+# 1. 隔离对比（合成输入，秒级，不需要 external/）：40 个用例
+envs/rt_env/bin/python -m unittest tests.test_retarget_modules -v
+
+# 2. 隔离对比（真实片段，需要 external/）：12 个数组 + 叠字逐位比
+envs/rt_env/bin/python scripts/dev/check_fallback_vs_baseline.py
+#   期望 11 个片段全部"逐位一致 ✓"，ours_webapple 那段整段单手→两边都拒掉
+
+# 3. 端到端 seed-0，再出四宫格看画面
+scripts/dev/render_compare_grid.py --runs ... --out outputs/dev/compare_grid_retarget/
+```
+
+合成输入那份有一个用例专门断言"三档补洞 + 判坏"四种状态都被打到了
+（`test_the_synthetic_input_actually_exercises_all_three_branches`）——
+**参照物再准，输入没打到分支也证明不了什么**。
+
+## 改了感知前端之后（`src/web2robot/perception/`）
+
+分两层，因为变更理由不同：`to_clip.py` 是**下游的输入契约**（EgoInfinity clip 目录），
+跟用哪个前端无关；`hawor.py` 这类是一个前端一个。前端的函数（`run_mano` /
+`load_slam_cam`）是**参数注入**进来的，所以单测不需要 GPU、不需要 checkpoint、
+不需要第三方仓库。
+
+```bash
+envs/rt_env/bin/python -m unittest tests.test_perception_modules -v   # 20 个用例
+```
+
+两处**错了不报错**的地方由测试钉住，都是实际会咬人的：
+
+1. `world_to_camera` 的 einsum 下标顺序。转置反了相当于用逆旋转，手跑到相机后面、
+   深度全负，但流水线照样跑到底出片。所以有一个用例和最笨的三重循环对齐，
+   另一个用例断言"转置版结果确实不同"—— 否则第一个用例只是在测 einsum 会不会跑。
+2. `hand_joints.bin` 的形状/dtype 与 `hand_meta.json` 的 `joints_shape` 一致。
+   上游是 `np.fromfile` + reshape，不一致**不抛异常**，只会 reshape 出错位的轨迹。
+
+还有一条约定：缺失关节填 **NaN 而不是 0** —— 0 是合法的相机系坐标，而
+`trajectory/traj_cleanup.py` 正是靠 NaN 找空洞的。左手固定 slot 0、右手 slot 1，
+不压缩空 slot：上游按 slot 取手，压缩会让片段中途换手，IK 照样解得出来，几乎看不出来。
 
 ## 改了 M7 的机器人定义（`src/web2robot/robots/m7/` 或 `assets/robots/m7/`）之后
 

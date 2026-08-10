@@ -39,6 +39,8 @@ scripts/dev/check_handframe_convention.py  # 上面那条 hand_frame 约定，�
 """
 from web2robot.robots.m7.config import CONFIG, ENV_SPEC
 from web2robot.robots.m7.env import M7Env, _MJCF_PATH, _SCENE_PATH
+from web2robot.robots.m7.hand_mapping import HAND_JOINT_NAMES, HAND_JOINT_SPEC
+from web2robot.robots.m7.ik_config import ik_spec
 from web2robot.robots.m7.sample_config import SAMPLE_CONFIG
 
 #: 全身 MJCF（``assets/robots/m7/m7.xml``）。导出它是因为框架侧还有第二处需要它：
@@ -50,4 +52,11 @@ MJCF_PATH  = _MJCF_PATH
 #: 带地面/光照的场景（``m7_scene.xml``），渲染与 hand_frame 检查用。
 SCENE_PATH = _SCENE_PATH
 
-__all__ = ["CONFIG", "ENV_SPEC", "M7Env", "SAMPLE_CONFIG", "MJCF_PATH", "SCENE_PATH"]
+#: 五指手 12 DoF ← MANO 的映射（纯 dict 列表，框架侧自己包成它的 dataclass）。
+#: 2026-08-10 从上游 ``kinematics/wilor_retargeter.py::_m7_12dof_from_keypoints``
+#: 搬进来 —— 那 12 行限位是 M7 的关节属性，不是重定向框架的知识。
+#: 见 ``hand_mapping.py``：M7 两只手屈曲范围相同且为正，**不要照抄 G1 的 per-side
+#: 符号翻转**。
+#: :data:`ik_spec` 同理，来自上游 ``kinematics/wrist_ik.py::RobotIKConfig.m7``。
+__all__ = ["CONFIG", "ENV_SPEC", "M7Env", "SAMPLE_CONFIG", "MJCF_PATH", "SCENE_PATH",
+           "HAND_JOINT_SPEC", "HAND_JOINT_NAMES", "ik_spec"]
