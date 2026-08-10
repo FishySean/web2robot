@@ -29,6 +29,7 @@
 | `envs/` | 三个 venv 的 symlink + `requirements-*.txt` 依赖清单 |
 | `assets/robots/m7/` | M7 的 MJCF / URDF / mesh（我们自己产出的资产，进 git） |
 | `tests/` | stdlib unittest（秒级）+ `tests/regression/` 回归基准 |
+| `evidence/` | 论文要引的实验证据。**进 git** —— 和 `outputs/` 的区别是它不一定重跑得出来 |
 | `data/` `outputs/` | 素材与产物，都不进 git。**产物只许落这里**，不许落 `external/` |
 
 ## 跑起来
@@ -52,7 +53,7 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_
 而这是**共享机器，不要往里装包**。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，60/60
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，75/75
 ```
 
 ## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
@@ -160,6 +161,22 @@ envs/rt_env/bin/python -m unittest tests.test_perception_modules -v   # 20 个�
 还有一条约定：缺失关节填 **NaN 而不是 0** —— 0 是合法的相机系坐标，而
 `trajectory/traj_cleanup.py` 正是靠 NaN 找空洞的。左手固定 slot 0、右手 slot 1，
 不压缩空 slot：上游按 slot 取手，压缩会让片段中途换手，IK 照样解得出来，几乎看不出来。
+
+## 论文里的数字改了之后（`evidence/` + `src/web2robot/eval/`）
+
+`evidence/` 里放的是论文要引的实验证据，**进 git**，和 `outputs/` 的区别是它不一定
+重跑得出来（外部数据集会被清、第三方 checkout 会被 `git clean`、3 GB checkpoint 不在库里）。
+规矩写在 [`evidence/README.md`](evidence/README.md)，一句话版：**存原始测量值不存结论数字，
+秒级可复核，每个数都有测试钉着。**
+
+```bash
+envs/rt_env/bin/python -m unittest tests.test_depth_benchmark -v   # 15 个用例，0.2 秒
+envs/rt_env/bin/python scripts/dev/render_depth_benchmark_fig.py   # 重画汇总图
+```
+
+这份测试的作用和别的不一样：它不防"代码改坏"，防的是**论文里的数字和仓库里的证据
+悄悄脱钩**。所以断言写的是具体数值不是"大于小于" —— 把中位偷偷改成均值，
+ABF12 的 11.0 会变 11.26、SMu41 的 3.5 会变 6.7，测试当场变红（验证过）。
 
 ## 改了 M7 的机器人定义（`src/web2robot/robots/m7/` 或 `assets/robots/m7/`）之后
 
