@@ -136,9 +136,13 @@ KeypointRCNN，COCO-17 关键点）用来判"取景全不全"，但它**数不�
 ### ⑤ 碰撞检测与轨迹处理 —— 两类不同的"不可信"
 
 **`collision/` 管"这个姿态物理上不合法"**（手臂穿进躯干、两手互穿）。做法是**代理几何
-＋后处理**，而不是用 MuJoCo 现成的碰撞检测：M7 的碰撞 geom 全是关掉的，上游那套靠
-MuJoCo contacts 的过滤器在 M7 上查不到任何东西。所以另写了一套：躯干用各向异性盒、
-手臂骨段用胶囊、每只手 11 个球，算有符号距离，用有限差分梯度下降把犯规的那侧手臂推出来。
+＋后处理**：躯干用各向异性盒、手臂骨段用胶囊、每只手 11 个球，算有符号距离，用有限差分
+梯度下降把犯规的那侧手臂推出来。为什么不直接用 MuJoCo 现成的碰撞检测？两个原因：上游
+那套过滤器在 M7 上查不到东西（它的 geom 集合把腰部和整只手都排除在外了，**不是**因为
+碰撞 geom 被关掉 —— `m7.xml` 里 98 个 geom 是开着的），而代理几何还多给一样东西：
+**处处连续的有符号距离**，MuJoCo 只在真的碰上之后才产生 contact，梯度下降就没有方向。
+官方 mesh contacts 现在当**独立复核**用（`scripts/dev/audit_mujoco_contacts.py`，只报告不改
+轨迹）。细节和实测数字在 [`collision/__init__.py`](src/web2robot/collision/__init__.py)。
 
 策略是**故意不对称**的，而且是量出来的：手臂穿进躯干**永远非法**，但两只手相触多数是
 **有意的双手抓握**（实测最深交叠只有 −2.5 cm，画面确认全是合抱罐子这类动作），强行推开
@@ -248,6 +252,36 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_
 | `envs/` | 三个 venv 的 symlink + 依赖清单 |
 | `docs/` | 下面这些文档 |
 
+## 用到的开源实现
+
+这个项目**自己写的只有"编排 + M7 适配 + 质量控制"**，感知和生成模型全是别家的。列在这里，
+免得以为哪个环节是我们从零实现的：
+
+| 环节 | 开源实现 | 干什么 | 从哪来 |
+|---|---|---|---|
+| ① 质检 | **YOLOv8**（`ultralytics==8.1.34`） | 数画面里有几个人 | pip |
+| ① 质检 | **KeypointRCNN**（`torchvision`） | 人体 17 点姿态，判第一/第三人称 | pip |
+| ③ 感知 | **WiLoR** / `wilor_mini@ebec42f9` | 单帧手部 MANO 重建 | pip git pin；权重在 `external/EgoInfinity/pretrained_models/` |
+| ③ 感知 | **MoGe-2**（`moge@07444410`） | 单目度量深度，给手部点云定尺度 | pip git pin |
+| ③ 感知 | **HaWoR** | 视频级手部重建（世界系轨迹） | `external/HaWoR/` |
+| ③ 感知 | **DROID-SLAM** + **Metric3D** | HaWoR 内部的相机轨迹与深度 | `external/HaWoR/thirdparty/` |
+| ④ 重定向 | **EgoInfinity** | 流匹配根位姿模型 + IK 框架 | `external/EgoInfinity/` |
+| ④⑤ 仿真 | **MuJoCo 3.6.0** / **MJX** / **JAX** / `pytorch_kinematics` | FK / IK / 碰撞 / 渲染 | pip |
+| 手模型 | **SMPL-X**（`smplx`）+ `chumpy` | MANO 手部参数模型 | pip |
+| （未接入）| **SAM 2** / **SAM 3** / **SAM-3D** | 物体分割与 6D 位姿，属于 EgoInfinity 的第一阶段物体流程 | 见下 |
+
+**为什么 `external/` 里只有两个 symlink。** 因为它只放**这条流水线直接依赖的第三方仓库**，
+而这两个仓库本身就是 monorepo，别家的实现藏在它们内部（`EgoInfinity/third_party/{sam2,wilor}`、
+`HaWoR/thirdparty/{DROID-SLAM,Metric3D}`）。其余第三方是 pip 依赖，精确版本记在
+`envs/requirements-*.txt`（上表"pip git pin"那几行就是钉死了 commit 的 GitHub 依赖）。
+
+**SAM3 / SAM-3D 不在这条流水线上。** 它们是 EgoInfinity 第一阶段**物体**流程的东西
+（分割 → 跟踪 → 6D 位姿），我们复现过，产物在只读归档 `phase1_repro/` 里；当前的
+web2robot 流水线只做**手**，没有任何模块调用它们。同理，仓库根目录下那些同级 checkout
+（`sam3/`、`sam-3d-objects/`、`FoundationPose-plus-plus/`、`NoPoSplat/`、`YoNoSplat/` 等）
+属于别的工作线（新视角合成、物体位姿），不是这个项目的依赖 —— 完整对照见
+[`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md)。
+
 ## 更多文档
 
 | 文档 | 什么时候看 |
@@ -255,7 +289,7 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_
 | [`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md) | **找东西**：每个目录放什么、重要参考资料的完整路径（深度实验证据、各阶段的验收视频） |
 | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) | **动手之前**：9 条必须遵守的工程规矩，以及各自由哪个测试钉着 |
 | [`docs/VERIFICATION.md`](docs/VERIFICATION.md) | **改完之后**：一个模块一套验收判据（为什么有的要求逐位相同，有的不能） |
-| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **卡住的时候**：17 个踩过的坑，现象 → 真因 → 怎么防 |
+| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **卡住的时候**：18 个踩过的坑，现象 → 真因 → 怎么防 |
 | [`external/patches/README.md`](external/patches/README.md) | 要动第三方仓库时：我们对上游改了什么、为什么 |
 
 ## 项目状态（2026-08）

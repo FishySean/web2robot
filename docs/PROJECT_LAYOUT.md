@@ -188,12 +188,13 @@ web2robot/
 | [`../README.md`](../README.md) | 项目介绍：做什么、有哪些环节、每个环节用什么技术、怎么启动。**给新人的第一份** |
 | [`CONVENTIONS.md`](CONVENTIONS.md) | 9 条必须遵守的工程规矩 + 每条由哪个测试钉着。**动手写代码之前看** |
 | [`VERIFICATION.md`](VERIFICATION.md) | 一个模块一套验收判据 + 迁移的五步方法论。**改完之后看** |
-| [`PITFALLS.md`](PITFALLS.md) | 17 个踩过的坑，现象 → 真因 → 怎么防。**报错方向不对时看** |
+| [`PITFALLS.md`](PITFALLS.md) | 18 个踩过的坑，现象 → 真因 → 怎么防。**报错方向不对时看** |
 | [`external/patches/README.md`](../external/patches/README.md) | 我们对上游改了什么、为什么，以及每次迁移的处置记录。**动上游之前必读** |
 | `external/patches/egoinfinity-modified.patch` | 唯一一份上游 diff（233 insertions）。**它变小是迁移做对了，变大就是有人往上游写逻辑** |
 | `outputs/legacy_runs/MANIFEST.tsv` | 从 `external/` 搬回来的 316 MB 存量的逐文件清单（保持原相对路径，没重命名） |
 | `data/webvid/README.md` + `raw/MANIFEST.md5` | 7 段手工挑的原片是什么、`md5sum -c` 怎么复核。**注意：这批是挑过的，不能当质检评测集**（选择偏差正好抵消掉质检要测的东西） |
 | `tests/regression/` | 质检的回归基准：3 段片 + 期望判决 + contact sheet |
+| `scripts/dev/audit_mujoco_contacts.py` | 用官方 MuJoCo mesh contacts 独立复核我方碰撞代理（只报告不改轨迹）。基线数字和命令在 [`VERIFICATION.md` 的⑤小节](VERIFICATION.md) |
 | [`docs/PRIORITY_2026-08-07.md`](PRIORITY_2026-08-07.md) | 当前优先级：质检/路由暂停自研，重定向第一 |
 | [`docs/TODO22_FRONTEND_CONSOLE.md`](TODO22_FRONTEND_CONSOLE.md) | 前端控制台的设计要求 |
 | [`docs/SYNC_2026-08-07.md`](SYNC_2026-08-07.md) | 阶段性同步记录 |
@@ -209,7 +210,7 @@ web2robot/
 |---|---|
 | `scripts/s3_to_clip.sh` | `outputs/clips/<片段名>/`（3~4 个 clip 契约文件） |
 | `scripts/s4_retarget.sh` | `outputs/retarget/<片段名>/`（顶掉上游"写在素材旁边"的默认值） |
-| `scripts/dev/_devcli.py`（7 个出片脚本共用） | `outputs/dev/<run 名>/` |
+| `scripts/dev/_devcli.py`（7 个开发期脚本共用：出片 6 个 + 碰撞审计 1 个） | `outputs/dev/<run 名>/` |
 | `scripts/dev/render_compare_grid.py` | 自带 `--out`，习惯落 `outputs/dev/compare_grid*/` |
 | 人工封存 | `outputs/archive/<主题>_<年-月>/` |
 

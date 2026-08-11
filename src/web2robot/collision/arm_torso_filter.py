@@ -1,8 +1,11 @@
 """Post-process an arm trajectory to remove arm-vs-torso self-collision (B1).
 
 Companion to models.collision.CollisionFilter (which handles *cross-arm*
-contacts via MuJoCo geoms).  M7's MuJoCo collision geoms are disabled, and the
-torso is excluded from the cross-arm filter by construction, so arm-through-body
+contacts via MuJoCo geoms).  m7.xml DOES have 98 collision-enabled mesh geoms
+(the disabled ones are in the arms-only m7_mjx.xml training model) — but the
+upstream cross-arm filter still cannot see arm-vs-torso, because its geom sets
+exclude the shared waist bodies by construction and its chain walk excludes the
+whole hand.  See collision/__init__.py for the measurements.  So arm-through-body
 needs a separate proxy-based pass — that is this module.
 
 Detection uses the analytic capsule/box proxies in models.capsule_collision

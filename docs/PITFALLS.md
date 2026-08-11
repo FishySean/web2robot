@@ -130,3 +130,19 @@ M7 的采样配置抄自 robonaut2，但其中两个参数（肘 jitter、`ou_st
 
 不是 bug，是参数没对上（`fps ≥ 20` 时它才真的开始平滑）。留着没动，但别指望
 "已经平滑过了"；真要平滑得先把 `--smooth_sigma` 调大。
+
+### 18. 两个 M7 MJCF 的碰撞设置**是相反的**，而且 `ncon > 0` 不能直接当判据
+
+`m7.xml`（IK / 渲染 / 碰撞过滤器加载的那个）196 个 geom 里有 **98 个是开碰撞的**；
+全关的是 `m7_mjx.xml` —— 那是我们自己用 `scripts/dev/generate_m7_mjx.py` 生成的
+arms-only FK 训练模型，`<default><geom contype="0" conaffinity="0"/>` 是**故意**的。
+两者别搞混：文档里曾经写成"M7 的碰撞 geom 全是关掉的"，是错的（2026-08-11 更正）。
+
+上游 `models/collision.py` 在 M7 上查不到东西，真因也不是 geom 关着，而是它的 geom 集合
+构造漏了两处：`shared = left_chain ∩ right_chain` 把三个 waist body（含 IK 链根
+`waist_pitch_link`）剔掉了，所以臂-躯永远不统计；`chain_to_root(hand_frame)` 只走末端到根
+的**一条链**，手掌手指的 108 个 geom 全不在集合里 —— 而实测跨臂接触**全部**是指-指接触。
+
+想用官方 contacts 的话，先排掉 6 组**结构性自重叠**：URDF 转出来的凸包在静息位就互相插着
+（`q=0` 时 `ncon=10`、最深 3.1 cm），不排就是"`ncon > 0` 恒为真"。这 6 组已经写在
+`scripts/dev/audit_mujoco_contacts.py` 的 `STRUCTURAL` 里，直接用那个脚本即可。

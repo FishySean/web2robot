@@ -1,7 +1,8 @@
 """Capsule/box collision proxies for M7 arm-vs-torso self-collision (B0).
 
-Model-agnostic: we do NOT touch the MuJoCo model (its collision geoms are
-disabled).  Instead we attach lightweight analytic proxies to a few bodies and
+Model-agnostic: we do NOT touch the MuJoCo model (we neither add nor enable any
+geom; m7.xml's own 98 collision geoms are left exactly as they are and are not
+read here).  Instead we attach lightweight analytic proxies to a few bodies and
 read their world poses (data.xpos / data.xmat) after mj_forward:
 
   * each long arm bone (upper arm, forearm) -> a capsule (segment + radius),
