@@ -205,7 +205,7 @@ outputs/retarget/xxx/
 ### 先跑测试确认环境是好的（秒级，不需要 GPU）
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 125 个用例
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 131 个用例
 ```
 
 ### 跑一遍流水线

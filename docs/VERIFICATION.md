@@ -9,7 +9,7 @@
 **所有模块共通的最后一步：出片，用眼睛看。** 指标 ≠ 画面。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，全套 125 个用例
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，全套 131 个用例
 ```
 
 ---
@@ -138,6 +138,30 @@ scripts/dev/m7_tool.sh audit_mujoco_contacts.py "$PWD/outputs/retarget/fill_jar_
 （右臂最深 2.36 cm 全在阈值下，整段没被动过），且深帧不收敛 —— 过滤器自己的日志是
 `left: fixed 53/71 (remaining 18)`，`w_ee=60` 压着 `w_pen=20` 在 60 步内解不开。
 换过滤器参数后拿这张表对比即可。
+
+### 轨迹清洗：空洞填补的位置感知策略
+
+`trajectory/traj_cleanup.py` 的空洞策略是**按位置**分的（2026-08-11 定），`FILL_REST`
+是最后兜底。改这块必须跑两样：
+
+```bash
+# 1. 单测钉住策略（TestGapPolicyByPosition，6 个用例）
+envs/rt_env/bin/python -m unittest tests.test_retarget_modules -v
+
+# 2. 看画面 —— 结尾"沿袭"vs"渐入静息位"左右对比
+MUJOCO_GL=osmesa envs/rt_env/bin/python scripts/dev/…（一次性脚本，见下）
+```
+
+判据不是数字而是画面：serve_cake 结尾（右手 44 帧 / 2.9 s、左手 17 帧 / 1.1 s）旧策略
+渐入静息位，等于**凭空编出最多 74.5° 的关节运动**（右臂逐关节最大
+`[10.9, 22.3, 10.2, 45.1, 16.2, 5.7, 74.5]`，均值 18.2°；左臂 24.0°/均值 9.4°）。
+f175 / f188 两张图能直接看出来：新策略两手停在最后一次测到的持盘姿态，旧策略两条手臂
+垂到体侧默认位。存档 `outputs/dev/tail_policy_serve_cake/tail_policy_hold_vs_rest.mp4`。
+
+结尾保持出来的帧**仍然标 `FILL_HOLD` 而不是 `OK`**，长度记在 `report["tail_hold"]`
+并打一行 ⚠ —— 单测 `test_long_tail_hold_is_reported_not_silent` 钉的就是这一点。
+全片段普查（11 个官方片段）确认这次改动只翻了三处片尾（serve_cake 左 17f / 右 44f、
+ours_webapple 右 58f），别的空洞一帧没动。
 
 ## M7 机器人定义（`src/web2robot/robots/m7/`、`assets/robots/m7/`）
 

@@ -25,7 +25,8 @@ from web2robot.retarget.fallback import (  # noqa: E402
 )
 from web2robot.retarget.root_anchor import sample_best_anchor  # noqa: E402
 from web2robot.trajectory.traj_cleanup import (  # noqa: E402
-    FILL_REST, STATUS_NAMES, blend_to_rest, clean_wrist_trajectory, relax_fingers,
+    FILL_HOLD, FILL_INTERP, FILL_REST, OK, STATUS_NAMES, blend_to_rest,
+    clean_wrist_trajectory, relax_fingers,
 )
 
 
@@ -280,6 +281,82 @@ class TestRootAnchorMatchesPreMigration(unittest.TestCase):
         est, sel = self._fakes([0.1])
         with self.assertRaises(ValueError):
             sample_best_anchor(est, sel, n_samples=0)
+
+
+class TestGapPolicyByPosition(unittest.TestCase):
+    """空洞策略是**位置感知**的：开头 / 中间 / 结尾三种待遇不同（2026-08-11 定）。
+
+    ``FILL_REST`` 会把测到的运动整段丢掉，所以它是最后兜底 —— 这几条用例钉住
+    "什么时候允许触发它"，避免以后有人把三个分支又合并回一个长度判断。
+    """
+
+    FPS = 15.0
+    T = 120
+
+    def _traj(self, holes):
+        """一条平滑轨迹，按 ``holes``（(a, b) 闭区间）挖空洞。"""
+        t = np.arange(self.T) / self.FPS
+        xyz = np.stack([0.30 + 0.05 * np.sin(2 * t),
+                        0.10 * np.cos(1.5 * t),
+                        0.45 + 0.04 * np.sin(t)], axis=1)
+        quat = np.tile(np.array([1.0, 0.0, 0.0, 0.0]), (self.T, 1))
+        traj = np.concatenate([xyz, quat], axis=1).astype(np.float32)
+        for a, b in holes:
+            traj[a:b + 1] = np.nan
+        return traj
+
+    def _status(self, holes, **kw):
+        _, st, _, rep = clean_wrist_trajectory(
+            self._traj(holes), self.FPS, detect_bad=False, verbose=False, **kw)
+        return st, rep
+
+    def test_trailing_gap_is_held_however_long(self):
+        """片尾 60 帧（4s）空洞 → 全部 hold，一帧 rest 都不许有。
+
+        后面没有帧，保持不造成跳变；渐入静息位反而是在最没信息的地方编大幅运动。
+        """
+        st, rep = self._status([(60, self.T - 1)])
+        self.assertEqual(set(st[60:].tolist()), {FILL_HOLD})
+        self.assertEqual(rep["n_rest"], 0)
+        # 位姿真的是沿袭最后一次检测，而不是别的什么
+        traj, _, _, _ = clean_wrist_trajectory(
+            self._traj([(60, self.T - 1)]), self.FPS, detect_bad=False, verbose=False)
+        self.assertTrue(np.allclose(traj[60:], traj[59]))
+
+    def test_long_tail_hold_is_reported_not_silent(self):
+        """沿袭片尾 ≠ 假装是真数据：帧不是 OK，长度要报出来。"""
+        st, rep = self._status([(60, self.T - 1)])
+        self.assertEqual(rep["tail_hold"], 60)
+        self.assertNotIn(OK, set(st[60:].tolist()))
+
+    def test_leading_gap_still_goes_to_rest_when_long(self):
+        """开头长空洞仍走 rest —— 前面没有帧可以沿袭，手臂总得从某处起手。"""
+        st, rep = self._status([(0, 44)])
+        self.assertEqual(set(st[:45].tolist()), {FILL_REST})
+        self.assertEqual(rep["tail_hold"], 0)
+
+    def test_short_leading_gap_holds(self):
+        st, _ = self._status([(0, 5)])
+        self.assertEqual(set(st[:6].tolist()), {FILL_HOLD})
+
+    def test_interior_threshold_was_widened_to_2_5s(self):
+        """中间空洞的上限从 1.5s 放宽到 2.5s（同一次决策：rest 是最后兜底）。
+
+        用 30 帧（2.0s）这个**旧策略下会走 rest、新策略下该插值**的长度来钉，
+        比贴着 `round(2.5*fps)` 的边界断言更能表达意图。
+        """
+        st, _ = self._status([(40, 69)])                    # 30f = 2.0s
+        self.assertEqual(set(st[40:70].tolist()), {FILL_INTERP})
+        st, _ = self._status([(40, 69)], max_interp_sec=1.5)  # 旧上限下确实是 rest
+        self.assertEqual(set(st[40:70].tolist()), {FILL_REST})
+        st, _ = self._status([(40, 99)])                    # 60f = 4.0s，还是 rest
+        self.assertEqual(set(st[40:100].tolist()), {FILL_REST})
+
+    def test_hold_tail_false_restores_the_old_behaviour(self):
+        """开关留着：``hold_tail=False`` 时片尾长空洞回到 rest。"""
+        st, rep = self._status([(60, self.T - 1)], hold_tail=False)
+        self.assertEqual(set(st[60:].tolist()), {FILL_REST})
+        self.assertEqual(rep["tail_hold"], 0)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,12 @@
    的自然静息位，重新捕获时再渐出。手指同步放松（``relax_fingers_on_rest``）：
    手臂垂在身侧却还攥着上一次检测到的抓握手型，看起来像握着一个不存在的东西。
 
+静息位是**最后兜底**，能不触发就不触发（2026-08-11 定的策略）：``FILL_REST`` 现在只
+出现在"中间的长空洞"和"开头的长空洞"两种情况；**片尾的空洞一律沿袭最后一帧**
+（``hold_tail=True``），因为后面没有帧了、保持不会造成任何跳变，而渐入静息位反而是在
+最没有信息的地方编一段大幅运动。片尾保持的长度会记在 ``report["tail_hold"]`` 里
+（帧仍标 ``FILL_HOLD``，不会冒充 ``OK``），所以"这段是保持出来的"依然传得下去。
+
 顺序不能换：输入侧要在建 IK 之前（它改的是喂给 IK 的目标），输出侧要在 IK 之后
 （它改的是解出来的关节角），而 ``FILL_REST`` 这个标记是前者产生、后者消费的。
 
@@ -49,8 +55,9 @@ def clean_input_wrists(
     raw_left:  np.ndarray,
     raw_right: np.ndarray,
     fps:       float,
-    max_interp_sec: float = 1.5,
-    max_hold_sec:   float = 0.5,
+    max_interp_sec: float = 2.5,
+    max_hold_sec:   float = 0.5,   # 只管开头空洞
+    hold_tail:      bool  = True,  # 结尾空洞：沿袭最后一帧，不论多长
     detect_bad:     bool  = True,
     log: Callable[[str], None] = print,
 ) -> InputCleanup:
@@ -68,7 +75,7 @@ def clean_input_wrists(
     """
     log("Bad/missing frame fallback:")
     kw = dict(max_interp_sec=max_interp_sec, max_hold_sec=max_hold_sec,
-              detect_bad=detect_bad)
+              hold_tail=hold_tail, detect_bad=detect_bad)
     left,  st_l, ca_l, rep_l = clean_wrist_trajectory(raw_left,  fps, side="left",  **kw)
     right, st_r, ca_r, rep_r = clean_wrist_trajectory(raw_right, fps, side="right", **kw)
     for name, traj in (("left", left), ("right", right)):

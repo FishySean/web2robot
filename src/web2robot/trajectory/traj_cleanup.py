@@ -38,15 +38,34 @@ using them for finger retargeting; only the wrist target is suspect.
 
 Gap policy
 ----------
-======================  =====================================================
-interior, <= max_interp  interpolate between both valid ends (lerp + SLERP).
-                         No jump at either boundary, unlike a hold.
-boundary, <= max_hold    hold the nearest valid pose (nothing to interpolate to).
-anything longer          fill the same way for IK's benefit, but mark the frames
-                         ``FILL_REST``: the caller ramps the arm to a natural
-                         rest pose in joint space (``blend_to_rest``) and marks
-                         the segment unusable.
-======================  =====================================================
+``FILL_REST`` is the **last resort**: it is the only branch that throws the
+measured motion away, so the policy is tuned to reach it as rarely as possible.
+Where the gap sits matters as much as how long it is:
+
+=========================  ==================================================
+interior, <= max_interp     interpolate between both valid ends (lerp + SLERP).
+                            No jump at either boundary, unlike a hold.
+interior, longer            ``FILL_REST`` — a multi-second straight line
+                            through space is fabrication, not interpolation.
+leading (clip starts blind)  <= max_hold: hold the first valid pose.  Longer:
+                            ``FILL_REST`` — there is nothing before the gap to
+                            carry forward, and the arm has to start *somewhere*,
+                            so an honest rest pose beats an invented reach.
+trailing (clip ends blind)  hold the last valid pose, **however long the tail
+                            is** (``hold_tail=True``).  Nothing follows, so a
+                            hold introduces no discontinuity and keeps the arm
+                            where the last real observation put it — ramping to
+                            rest here is a large invented motion at the exact
+                            point where we know least.  The frames are still
+                            marked ``FILL_HOLD`` (never ``OK``) and long tails
+                            are reported in ``report["tail_hold"]``, so "this is
+                            held, not measured" still reaches the caller.
+=========================  ==================================================
+
+The leading/trailing asymmetry is a deliberate design decision (2026-08-11), not
+an oversight: a held *tail* is the cheapest honest answer, a held *head* does not
+exist.  ``max_interp_sec`` was raised 1.5 s -> 2.5 s at the same time, for the
+same reason — keep interpolating a bit longer before giving up on the motion.
 """
 
 from __future__ import annotations
@@ -190,8 +209,9 @@ def _interp_pose(traj, a, b, ts):
 def clean_wrist_trajectory(
     traj_raw:    np.ndarray,     # (T, 7) with NaN rows where undetected
     fps:         float,
-    max_interp_sec: float = 1.5,
-    max_hold_sec:   float = 0.5,
+    max_interp_sec: float = 2.5,
+    max_hold_sec:   float = 0.5,   # leading gaps only (see hold_tail)
+    hold_tail:      bool  = True,  # trailing gap: hold, however long
     detect_bad:     bool  = True,
     side:           str   = "",
     verbose:        bool  = True,
@@ -214,7 +234,7 @@ def clean_wrist_trajectory(
         status[:] = FILL_REST
         cause[:]  = C_MISSING
         report.update(never_detected=True, bad_runs=[], quat_flips=0,
-                      n_interp=0, n_hold=0, n_rest=T)
+                      n_interp=0, n_hold=0, n_rest=T, tail_hold=0)
         if verbose:
             print(f"  [cleanup:{side}] hand never detected → whole clip rest pose")
         return traj, status, cause, report
@@ -237,30 +257,30 @@ def clean_wrist_trajectory(
     # ── classify and fill each gap ────────────────────────────────────────────
     max_interp = max(1, int(round(max_interp_sec * fps)))
     max_hold   = max(1, int(round(max_hold_sec   * fps)))
-    vi = np.where(valid)[0]
+    report["tail_hold"] = 0        # frames of tail held beyond max_hold
 
     for a, b in _runs_of_true(~valid):
         L = b - a + 1
         prev = a - 1 if a > 0 else None
         nxt  = b + 1 if b < T - 1 else None
-        interior = prev is not None and nxt is not None
 
-        if interior and L <= max_interp:
+        if prev is not None and nxt is not None:            # ── interior
             _interp_pose(traj, prev, nxt, range(a, b + 1))
-            status[a:b + 1] = FILL_INTERP
-        elif not interior and L <= max_hold:
-            src = prev if prev is not None else nxt
-            traj[a:b + 1] = traj[src]
-            status[a:b + 1] = FILL_HOLD
-        else:
-            # too long to invent motion — fill something sane for IK, then let
-            # the caller ramp the arm to a rest pose in joint space.
-            if interior:
-                _interp_pose(traj, prev, nxt, range(a, b + 1))
+            status[a:b + 1] = FILL_INTERP if L <= max_interp else FILL_REST
+        elif prev is None:                                  # ── leading
+            traj[a:b + 1] = traj[nxt]
+            status[a:b + 1] = FILL_HOLD if L <= max_hold else FILL_REST
+        else:                                               # ── trailing
+            traj[a:b + 1] = traj[prev]
+            if hold_tail or L <= max_hold:
+                status[a:b + 1] = FILL_HOLD
+                if L > max_hold:
+                    # held beyond what the boundary budget would allow: still
+                    # honest (not OK), but the caller should know how much of
+                    # the tail is invented so it can trim or flag the clip.
+                    report["tail_hold"] = int(L)
             else:
-                src = prev if prev is not None else nxt
-                traj[a:b + 1] = traj[src]
-            status[a:b + 1] = FILL_REST
+                status[a:b + 1] = FILL_REST
 
     report["n_interp"] = int((status == FILL_INTERP).sum())
     report["n_hold"]   = int((status == FILL_HOLD).sum())
@@ -272,6 +292,10 @@ def clean_wrist_trajectory(
               f"quat_flips={report['quat_flips']}  bad={report['n_bad']}  "
               f"→ interp={report['n_interp']} hold={report['n_hold']} "
               f"rest={report['n_rest']}")
+        if report["tail_hold"]:
+            print(f"      ⚠ 结尾 {report['tail_hold']} 帧"
+                  f"（{report['tail_hold'] / fps:.1f}s）是沿袭最后一次检测保持出来的，"
+                  f"不是测到的动作 —— 要么裁掉，要么标注")
         for a, b, bl, ch in bad_runs:
             print(f"      bad run f{a}..{b} ({b-a+1}f): bulge={100*bl:.1f}cm "
                   f"off a {100*ch:.1f}cm chord")
