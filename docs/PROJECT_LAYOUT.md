@@ -198,6 +198,7 @@ web2robot/
 | [`docs/PRIORITY_2026-08-07.md`](PRIORITY_2026-08-07.md) | 当前优先级：质检/路由暂停自研，重定向第一 |
 | [`docs/TODO22_FRONTEND_CONSOLE.md`](TODO22_FRONTEND_CONSOLE.md) | 前端控制台的设计要求 |
 | [`docs/SYNC_2026-08-07.md`](SYNC_2026-08-07.md) | 阶段性同步记录 |
+| [`docs/RELATED_WORK_2026-08-11.md`](RELATED_WORK_2026-08-11.md) | 四篇相关工作逐条对照（Ego2Robot / Phantom / Do as I Do / HandUMI）+ ICLR 定位结论 + 由此产生的待办。**写论文和定优先级时看** |
 | `envs/requirements-{rt,hawor,perception}.txt` | 三个环境的精确版本。**共享机器，不要 pip install** |
 
 ---
