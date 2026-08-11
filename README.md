@@ -15,7 +15,14 @@
 **第①步的输出不是二元的合格/不合格。** 每一段通过的片段都带路由标签 —— 因为
 "第一人称"不是缺陷，它只是走另一条技术路线；二元门会把那条分支饿死。
 
+> **找东西请看 [`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md)** —— 每个目录放什么、
+> 目录和上面这张流水线图怎么对应、以及**重要参考资料的完整路径**（深度误差
+> 11cm→0.6cm 的证据、两条深度策略的对比视频、各阶段的四宫格验收片都在那份索引里）。
+> 这份 README 讲的是"怎么跑、改完怎么验证"，那份讲"什么东西放在哪"。
+
 ## 目录
+
+一句话版在下表，完整说明见 [`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md)。
 
 | 位置 | 是什么 |
 |---|---|
@@ -31,6 +38,7 @@
 | `tests/` | stdlib unittest（秒级）+ `tests/regression/` 回归基准 |
 | `evidence/` | 论文要引的实验证据。**进 git** —— 和 `outputs/` 的区别是它不一定重跑得出来 |
 | `data/` `outputs/` | 素材与产物，都不进 git。**产物只许落这里**，不许落 `external/` |
+| `docs/` | 决策记录、优先级、待办；**结构总览在 `docs/PROJECT_LAYOUT.md`** |
 
 ## 跑起来
 
@@ -54,7 +62,7 @@ scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_
 而这是**共享机器，不要往里装包**。
 
 ```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，119/119
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，124/124
 ```
 
 ## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
