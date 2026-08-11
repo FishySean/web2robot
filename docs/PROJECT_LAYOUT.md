@@ -3,7 +3,9 @@
 这份文档的用途：**不翻文件夹就能定位到想找的东西。** 新接手这个工程的人（包括半年后的
 自己）只看这一份，应该就知道每样东西该在哪、为什么在那。
 
-`README.md` 是"怎么跑、改完怎么验证"；这份是"什么东西放在哪"。两份不重复。
+[`../README.md`](../README.md) 是给新人看的"这个项目是什么、怎么启动"；这份是"什么东西
+放在哪"。规矩看 [`CONVENTIONS.md`](CONVENTIONS.md)，坑看 [`PITFALLS.md`](PITFALLS.md)，
+验收看 [`VERIFICATION.md`](VERIFICATION.md)。四份不重复。
 
 ---
 
@@ -110,7 +112,7 @@ web2robot/
 `external/` 的性质要单说：它是**别人家的目录**，我们只有读权限的心态。产物落进去的危害
 不是乱，是一次 `git clean -xdf` 就全没 —— 实测攒过 408 MB 我们的产物在里面，而上游 git
 只跟踪其中 1 个。这条判据写成了代码（`P.check_output_dir()`，违反就 `SystemExit`）而不是
-写在文档里，理由见 README 最后一节。
+写在文档里，理由见 [`CONVENTIONS.md` 第 1 条](CONVENTIONS.md)。
 
 ---
 
@@ -142,7 +144,7 @@ web2robot/
 | 路径 | 是什么 |
 |---|---|
 | **`outputs/viz/wilor_depth_modes.mp4`** | 四宫格对比片（h264，1430×770）。左右两个 3D 面板**共用同一个视野半径** —— 各自 autoscale 会把 6.5 倍的尺度差藏起来 |
-| `scripts/dev/viz_wilor_depth_modes.py` | 出这个片的脚本（可重跑，命令在 README 的 WiLoR 小节） |
+| `scripts/dev/viz_wilor_depth_modes.py` | 出这个片的脚本（可重跑，命令在 [`VERIFICATION.md`](VERIFICATION.md) 的③感知小节） |
 | `src/web2robot/perception/wilor.py` 文件头 | 那张骨长表 + 为什么两条策略的"开合"数字不可比 |
 | `outputs/clips/cli_smoke_abf12_{pointmap,globalscale,K}/` | 三条深度路径各自的 clip 产物 |
 
@@ -183,6 +185,10 @@ web2robot/
 
 | 路径 | 是什么 |
 |---|---|
+| [`../README.md`](../README.md) | 项目介绍：做什么、有哪些环节、每个环节用什么技术、怎么启动。**给新人的第一份** |
+| [`CONVENTIONS.md`](CONVENTIONS.md) | 9 条必须遵守的工程规矩 + 每条由哪个测试钉着。**动手写代码之前看** |
+| [`VERIFICATION.md`](VERIFICATION.md) | 一个模块一套验收判据 + 迁移的五步方法论。**改完之后看** |
+| [`PITFALLS.md`](PITFALLS.md) | 17 个踩过的坑，现象 → 真因 → 怎么防。**报错方向不对时看** |
 | [`external/patches/README.md`](../external/patches/README.md) | 我们对上游改了什么、为什么，以及每次迁移的处置记录。**动上游之前必读** |
 | `external/patches/egoinfinity-modified.patch` | 唯一一份上游 diff（233 insertions）。**它变小是迁移做对了，变大就是有人往上游写逻辑** |
 | `outputs/legacy_runs/MANIFEST.tsv` | 从 `external/` 搬回来的 316 MB 存量的逐文件清单（保持原相对路径，没重命名） |

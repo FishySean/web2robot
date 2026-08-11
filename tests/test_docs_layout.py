@@ -133,6 +133,20 @@ class TestLayoutDocMatchesReality(unittest.TestCase):
         """入口只能有一个：README 必须指过来，不然这份文档没人会发现。"""
         self.assertIn("docs/PROJECT_LAYOUT.md", (REPO / "README.md").read_text())
 
+    def test_no_orphan_document_under_docs(self):
+        """`docs/` 下新写一份文档，必须有人链过去，否则等于没写。
+
+        入口只认两个：README（新人进来的第一份）和本布局文档（找东西的索引）。
+        新增文档时顺手在其中一处加一行 —— 这条测试就是在提醒你加。
+        """
+        entries = (REPO / "README.md").read_text() + self.text
+        orphans = [p.name for p in sorted((REPO / "docs").glob("*.md"))
+                   if p.name != "PROJECT_LAYOUT.md" and p.name not in entries]
+        self.assertEqual(
+            orphans, [],
+            "docs/ 下这几份文档没有任何入口指过去（README 或 PROJECT_LAYOUT 里加一行）："
+            + ", ".join(orphans))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

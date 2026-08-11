@@ -1,302 +1,282 @@
-# web2robot —— 网络视频 → 机器人动作训练数据
+# web2robot
+
+**从网络上的人类操作视频，自动造出机器人可执行的动作数据。**
+
+进去是一段随手抓来的视频（有人在折衣服、倒水、摆盘子），出来是一台真机器人（目前是
+M7 人形机器人）的关节角轨迹 —— 可以直接当模仿学习的训练数据。
+
+## 为什么要做这件事
+
+机器人模仿学习的瓶颈是数据。真机遥操作采集又慢又贵，一天采几百条；而网络上人做家务、
+做手工、操作物体的视频**近乎无限**。问题是这些视频不是动作数据：
+
+- 没有关节角，只有像素；
+- 没有尺度（视频里看不出那只手离相机 40 cm 还是 80 cm）；
+- 人手和机器人手**结构不同**（人手 21 个关节、五指柔性；M7 的手是 12 个自由度的机构）；
+- 而且**大部分片段根本不能用** —— 拍不全、镜头切来切去、只有一只手入画。
+
+所以这条流水线要依次解决：**挑出能用的片段 → 决定用哪套技术处理它 → 把手的 3D 运动
+从视频里恢复出来 → 换算成机器人关节角 → 修掉物理上不可能的姿态**。
+
+---
+
+## 整条流水线
 
 ```
-海量从网上抓取的视频
-    │
-    ├─①  取景质检        拍全了没有 / 镜头稳不稳 / 背景合不合适        src/web2robot/quality/
-    ├─②  视角与运动分类   第一或第三人称 / 相机动不动 → 选技术路线      src/web2robot/routing/
-    ├─③  感知前端        WiLoR+MoGe（相机固定）或 HaWoR（相机运动）    src/web2robot/perception/
-    ├─④  重定向          EgoInfinity 官方框架 + M7 定制               src/web2robot/retarget/
-    ├─⑤  碰撞检测与平滑   臂-躯 / 双手 / 手指，坏帧兜底                src/web2robot/collision/
-    │                                                              src/web2robot/trajectory/
-    └─→  干净、可信的机器人动作训练数据
+    海量从网上抓取的视频
+            │
+  ┌─────────▼──────────┐
+  │ ① 取景质检          │  拍全了没？镜头稳不稳？背景合不合适？      quality/
+  └─────────┬──────────┘  → 判决（accept / trim / defer / reject）
+            │
+  ┌─────────▼──────────┐
+  │ ② 视角与运动分类     │  第一还是第三人称？相机动不动？           routing/
+  └─────────┬──────────┘  → 路由标签：这段该走哪条技术路线
+            │
+  ┌─────────▼──────────┐
+  │ ③ 感知前端          │  从视频里恢复手的 3D 轨迹                 perception/
+  └─────────┬──────────┘  → clip 目录（相机系、米制、21 关节）
+            │
+  ┌─────────▼──────────┐
+  │ ④ 重定向            │  人手轨迹 → 机器人关节角（IK）            retarget/
+  └─────────┬──────────┘  → 关节轨迹                              robots/m7/
+            │
+  ┌─────────▼──────────┐
+  │ ⑤ 碰撞检测 + 轨迹处理 │  手臂穿进躯干了？这一帧的数据可信吗？     collision/
+  └─────────┬──────────┘                                          trajectory/
+            ▼
+    干净、可信的机器人动作训练数据
 ```
 
-**第①步的输出不是二元的合格/不合格。** 每一段通过的片段都带路由标签 —— 因为
-"第一人称"不是缺陷，它只是走另一条技术路线；二元门会把那条分支饿死。
+**顺序是有讲究的**：②必须在③之前（不同的感知技术要求不同的拍摄条件，选错了整段白跑）；
+`trajectory/` 的坏帧清洗在④**之前**（清的是喂给 IK 的源数据），而 `collision/` 在④
+**之后**（改的是解出来的关节角）。
 
-> **找东西请看 [`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md)** —— 每个目录放什么、
-> 目录和上面这张流水线图怎么对应、以及**重要参考资料的完整路径**（深度误差
-> 11cm→0.6cm 的证据、两条深度策略的对比视频、各阶段的四宫格验收片都在那份索引里）。
-> 这份 README 讲的是"怎么跑、改完怎么验证"，那份讲"什么东西放在哪"。
+| 环节 | 输入 → 输出 | 用什么技术 | 代码 |
+|---|---|---|---|
+| ①质检 | 原始 mp4 → 判决 + 标签 | KeypointRCNN 人体姿态、YOLO 手部检测、光流、切镜检测 | [`quality/`](src/web2robot/quality/) |
+| ②路由 | 标签 → 走哪条路线 | 规则（来自一个月的人工试错） | [`routing/`](src/web2robot/routing/) |
+| ③感知 | mp4 → 手的 3D 轨迹 | HaWoR（SLAM+MANO）或 WiLoR+MoGe | [`perception/`](src/web2robot/perception/) |
+| ④重定向 | 手轨迹 → 关节角 | flow-matching 根位姿估计 + 逆运动学 | [`retarget/`](src/web2robot/retarget/) |
+| ⑤碰撞/轨迹 | 关节角 → 干净的关节角 | 代理几何 + 有符号距离梯度下降；坏帧检测与填补 | [`collision/`](src/web2robot/collision/) [`trajectory/`](src/web2robot/trajectory/) |
 
-## 目录
+---
 
-一句话版在下表，完整说明见 [`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md)。
+## 各环节在做什么
 
-| 位置 | 是什么 |
+### ① 取景质检 —— 这段视频能不能用
+
+在**原始 RGB** 上跑，输出不是"合格/不合格"两档，而是五档：
+
+| 判决 | 含义 |
 |---|---|
-| `src/web2robot/` | 全部逻辑。模块按**流水线环节**命名，一个环节一个包 |
-| `src/web2robot/robots/` | 机器人定义（一台机器人一个子包，**不 import 任何重定向框架**）|
-| `configs/paths.yaml` | **全工程唯一允许出现绝对路径的地方**。换机器只改这一个文件 |
-| `scripts/` | 薄壳，只负责"用对的解释器 + 设好 PYTHONPATH"，不含逻辑 |
-| `scripts/dev/` | 开发期工具（回归比对之类） |
-| `external/` | 第三方仓库的 symlink（EgoInfinity / HaWoR），**里面不改代码** |
-| `external/patches/` | 我们对上游的改动：逻辑归我方 + 一个 patch 记注入点 |
-| `envs/` | 三个 venv 的 symlink + `requirements-*.txt` 依赖清单 |
-| `assets/robots/m7/` | M7 的 MJCF / URDF / mesh（我们自己产出的资产，进 git） |
-| `tests/` | stdlib unittest（秒级）+ `tests/regression/` 回归基准 |
-| `evidence/` | 论文要引的实验证据。**进 git** —— 和 `outputs/` 的区别是它不一定重跑得出来 |
-| `data/` `outputs/` | 素材与产物，都不进 git。**产物只许落这里**，不许落 `external/` |
-| `docs/` | 决策记录、优先级、待办；**结构总览在 `docs/PROJECT_LAYOUT.md`** |
+| `ACCEPT` | 第三人称、身体拍全了、没有致命切镜 → 直接进下一环 |
+| `TRIM` | 同上，但中间有切镜 → 裁到最长可用片段 |
+| `DEFER` | 只拍到手，没拍到躯干 → **不是不合格**，交给②判断视角 |
+| `REJECT` | 没有稳定的双手，或者切完之后没剩下什么 |
+| `UNKNOWN` | 某个信号算不出来 → 人看一眼 |
 
-## 跑起来
+用了**两个**手部相关的模型，这是量出来的必要：身体姿态模型（torchvision 的
+KeypointRCNN，COCO-17 关键点）用来判"取景全不全"，但它**数不了手** —— 在只拍手的
+素材上，一只手的片段得分反而比两只手**更高**（0.25 > 0.21，四个阈值都成立）。信号是
+反的，调阈值救不回来，因为它本质是个人体检测器。所以数手用 WiLoR 那套 YOLO 手部检测器，
+同一组对照素材上干净分开（两手 0.42 / 一手 0.00 / 无人 0.00）。
 
-这台机器上 **`conda activate` 不生效**，一律用绝对路径的解释器；薄壳已经替你处理好了：
+镜头切换和相机运动分数是从 EgoInfinity 官方的预筛（`action100m_filter`）移植的，
+行为保持一致，好让我们的数和他们的可比。**唯一的策略差异**：官方把"相机在动"判为不合格，
+我们把它当成**路由标签** —— 相机动的片段走 HaWoR，不动的走 WiLoR，两种都是好素材。
+
+### ② 视角与运动分类 —— 这段该走哪条路线
+
+四个输入：视角（第一/第三人称）、相机动不动、背景纹理够不够、时长够不够。规则是不对称的：
+
+> **HaWoR 需要三个条件同时满足**：相机有真实平移（视差）、背景有纹理、帧数够。
+> 任何一个不满足 → 走 WiLoR + MoGe。不确定 → 也走 WiLoR（安全默认值）。
+
+这个不对称来自一次真实的失败：在一个纯色背景的片段上，HaWoR 的 SLAM 尺度崩到了约
+0.01，输出大量 NaN。**这比 WiLoR"诚实地给不出世界运动"更糟** —— 前者是错的数，
+后者是缺的数，错的数会一路流到训练集里。
+
+### ③ 感知前端 —— 从视频里把手的 3D 轨迹取出来
+
+两条路线，**失败方式不同**，这决定了谁兜底谁：
+
+| | HaWoR | WiLoR + MoGe |
+|---|---|---|
+| 适用 | 相机在动 | 相机固定 |
+| 原理 | SLAM 估相机轨迹 + MANO 手部重建 → 世界系手部运动 | 逐帧手部重建（无度量深度）+ MoGe-2 单目深度补尺度 |
+| 深度精度 | **0.6 cm**（HO-3D 实测） | 约 **11 cm**，而且是**反相关**的 |
+| 怎么坏 | 条件不满足时**整段失败**（尺度崩、NaN） | **从不崩溃**，只是少检出几帧 |
+
+所以 WiLoR 是兜底那条，即使它深度更差。**单目深度是整条链路最硬的瓶颈** ——
+证据（含实验数据和复现代码）在 [`evidence/depth_benchmark_ho3d/`](evidence/depth_benchmark_ho3d/)，
+这也是目前最可能写进论文的一份材料。
+
+两条前端最后都落成同一个**下游契约**（一个 clip 目录，见下面"数据长什么样"），
+所以换前端不影响下游。
+
+### ④ 重定向 —— 人手轨迹变成机器人关节角
+
+这一环的求解器是 EgoInfinity 官方框架（在 [`external/`](external/)）：
+
+- **根位姿估计**：一个 flow-matching 生成模型，从手的运动反推躯干该站在哪；
+- **逆运动学（IK）**：给定手腕的目标位姿，解 7 自由度单臂的关节角；
+- **手部映射**：MANO 的 21 个关节 → M7 五指手的 12 个自由度。
+
+我们在这一环加的东西：
+
+- **best-of-N 根锚点采样** —— 根位姿估计器是生成模型，**同一段视频每次跑出的躯干位置
+  都不一样**，锚点偏一点整条手臂就有一半帧解不出来。原始实现抽一次就用，好坏看运气；
+  现在抽 N 次、按 IK 收敛率打分、留最好的。
+- **坏帧兜底的编排** —— 见⑤。
+- **M7 这台机器人的定义**（[`robots/m7/`](src/web2robot/robots/m7/)）：IK 串链、关节限位、
+  末端帧轴向约定、手部映射表。这一层**不 import 任何重定向框架** ——
+  加一台新机器人只要新建一个子包，别的模块一行不用改。
+
+### ⑤ 碰撞检测与轨迹处理 —— 两类不同的"不可信"
+
+**`collision/` 管"这个姿态物理上不合法"**（手臂穿进躯干、两手互穿）。做法是**代理几何
+＋后处理**，而不是用 MuJoCo 现成的碰撞检测：M7 的碰撞 geom 全是关掉的，上游那套靠
+MuJoCo contacts 的过滤器在 M7 上查不到任何东西。所以另写了一套：躯干用各向异性盒、
+手臂骨段用胶囊、每只手 11 个球，算有符号距离，用有限差分梯度下降把犯规的那侧手臂推出来。
+
+策略是**故意不对称**的，而且是量出来的：手臂穿进躯干**永远非法**，但两只手相触多数是
+**有意的双手抓握**（实测最深交叠只有 −2.5 cm，画面确认全是合抱罐子这类动作），强行推开
+会毁掉抓握。所以双手那条比躯干那条保守得多。**手指关节从不被改写** —— 指尖只作为触发
+条件，纠正由手臂承担、整只手随手腕带出。
+
+**`trajectory/` 管"这一帧的数据根本不可信"**（手没检测到、手腕深度爆点、四元数跳变）。
+三级坏帧检测 + 长度感知填补：短的内部空洞插值、短的边界空洞保持、**长空洞标记成
+`FILL_REST` 交给调用方渐入静息位** —— 长空洞填出来也不是可用数据，所以状态要带出去，
+不能悄悄补平。这套机制修掉了 `fill_jar` 那段左手崩坏 11 秒的片子。
+
+---
+
+## 数据在环节之间长什么样
+
+```
+data/webvid/raw/xxx.mp4          原始视频
+        │  ① scripts/s1_quality_gate.sh
+        ▼
+outputs/qc.jsonl                 每段视频一行 JSON：判决 + 路由标签 + 各信号的值
+        │  ③ scripts/s3_to_clip.sh
+        ▼
+outputs/clips/xxx/               ← 下游框架的输入契约，三个文件
+    hand_joints.bin                裸 float32，形状 (T, 2, 21, 3)，相机系、米制
+    hand_meta.json                 帧数 / 形状 / 每帧左右手标记
+    scene.json                     焦距、重力方向、fps、片段 id
+        │  ④⑤ scripts/s4_retarget.sh
+        ▼
+outputs/retarget/xxx/
+    trajectory.npz                 关节角轨迹 ← 这就是最终产物
+    robot_sim.mp4                  渲染出来的机器人动画（用来人眼确认）
+    input_viz.mp4                  源视频叠上检测结果
+```
+
+关于 `hand_joints.bin` 有两条约定，都是踩过坑写下来的：
+
+- **左手固定第 0 槽、右手第 1 槽，不压缩空槽。** 上游按槽位取手，压缩会让左右手在片段
+  中途对调 —— 而对调之后 IK 照样解得出来，画面上就是两只手互换了任务，很难看出来。
+- **没检测到的关节填 `NaN`，不填 0。** 0 是一个合法的相机系坐标（就在光心上），
+  用 0 填缺失，坏帧检测就再也找不到空洞了。
+
+---
+
+## 快速开始
+
+### 环境
+
+三个 Python venv，各自装好了要用的东西，**不要 `pip install`**（这是共享机器，
+`envs/requirements-*.txt` 记着精确版本）：
+
+| venv | 干什么用 |
+|---|---|
+| `envs/rt_env` | 重定向 + 质检（jax / mujoco / torch / ultralytics） |
+| `envs/hawor_env` | HaWoR 那条感知前端 |
+| `envs/perception_env` | WiLoR + MoGe 那条感知前端 |
+
+这台机器上 **`conda activate` 不生效**，一律用绝对路径的解释器。下面那些 `scripts/*.sh`
+是薄壳，只负责"用对的解释器 + 设好环境变量"，不含逻辑 —— 直接用它们就行。
+
+### 先跑测试确认环境是好的（秒级，不需要 GPU）
 
 ```bash
+envs/rt_env/bin/python -m unittest discover -s tests -v     # 125 个用例
+```
+
+### 跑一遍流水线
+
+```bash
+# ① 质检：一个目录的视频 → 判决 + 路由标签，另出 contact sheet 给人看
 scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --viz outputs/ev/
 
-# ③感知前端产物 → EgoInfinity clip 目录（子命令一个前端一个，各自的 venv）
+# ③ 感知前端 → clip 目录（子命令一个前端一个，各自的 venv）
+scripts/s3_to_clip.sh wilor data/webvid/raw/v1.mp4 --out outputs/clips/v1 --fps 15
 scripts/s3_to_clip.sh hawor external/HaWoR/example/ho3d_SMu41 --frames 55 \
     --out outputs/clips/ho3d_SMu41 --fps 15 --hands right
-scripts/s3_to_clip.sh wilor data/webvid/raw/v1.mp4 --out outputs/clips/v1 --fps 15
 
-# ④重定向 + ⑤碰撞纠正（上游 EgoInfinity 主流程，碰撞/清洗逻辑走我方包）
+# ④⑤ 重定向 + 碰撞纠正
 scripts/s4_retarget.sh examples/fill_jar --robot m7 --out outputs/retarget/fill_jar \
     --ckpt runs/m7/taskspace_v2/checkpoints/final.pt --seed 0 --n_samples 5 \
     --arm_torso_collision --dual_hand_collision
 ```
 
-不用 `pip install`。三个 venv 已经装好了要用的东西（`envs/requirements-*.txt` 记着精确版本），
-而这是**共享机器，不要往里装包**。
+跑完**一定要打开 `robot_sim.mp4` 看一眼**。这个工程有一条贯穿全流程的规矩：
+**指标 ≠ 画面** —— IK 成功率 100% 的片段照样可能手穿进躯干。
 
-```bash
-envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，124/124
-```
+### 想读代码的话，从哪读起
 
-## 重定向这一步的三个环境坑（薄壳已经替你处理，但要知道为什么）
+1. `src/web2robot/perception/to_clip.py` —— 数据契约，读完就知道各环节之间传的是什么；
+2. 各个包的 `__init__.py` —— 每个都写了"这一层负责什么、为什么这么切"；
+3. `tests/` —— 想知道某个约定是什么意思，看钉住它的那个用例最快。
 
-1. **无头机器没有 X11**，默认 GLFW 后端直接 `could not initialize GLFW`：轨迹算完了却出不了片。
-   `egl` 在这套 driver 上清理时抛 `EGLError`，**`osmesa`（CPU 软渲染）实测可用**。
-2. **`--no-preview` 不加会丢掉整份日志。** 上游跑完拉一个交互式 GLFW 预览窗，无头机上它在
-   C 层 abort，python 的 stdout 缓冲区来不及 flush —— 踩过：`robot_sim.mp4` 都写出来了，
-   日志里只剩一行 GLFW 报错，`ArmTorsoFilter` 的统计全丢。配 `PYTHONUNBUFFERED=1` 双保险。
-   （注意是 `--no-preview`，连字符，不是下划线。）
-3. **不给 `--seed` 就没法和任何人对比结果。** 根锚点是从**随机先验**积 ODE 得来的
-   （上游 `test.py` 第 241 区块自己写了这件事），所以锚点和 IK 可达性每次都不同。
-   要做新旧代码对比，必须 `--seed` 固定 + `--n_samples` 相同。
+---
 
-## 两个踩过的坑，都已经用测试钉住
+## 目录
 
-**1. venv 的解释器路径不能 `.resolve()`。** venv 的 `bin/python` 本身就是指向基础环境的
-symlink，隔离靠的是 `pyvenv.cfg` 所在的目录。跟着 symlink 走会掉回基础环境，包完全是另一套 ——
-实测 `envs/rt_env/bin/python` 有 `ultralytics`，resolve 成 `gs3dgs_env/bin/python3.10`
-之后就没有。这种错以 `ModuleNotFoundError` 的形式出现，看起来像"环境装漏了"，很难查到真因。
-`tests/test_paths.py` 里两个用例专门钉这件事，防止将来有人"顺手整理"再把它引回来。
+| 位置 | 是什么 |
+|---|---|
+| `src/web2robot/` | 全部逻辑，一个流水线环节一个包 |
+| `scripts/` | 薄壳（跑流水线用）；`scripts/dev/` 是开发期工具 |
+| `tests/` | stdlib unittest，秒级，不需要 GPU |
+| `configs/paths.yaml` | **全工程唯一允许写绝对路径的地方**，换机器只改这一个文件 |
+| `assets/robots/m7/` | M7 的 MJCF / URDF / mesh |
+| `data/` | 原始素材（不进 git） |
+| `outputs/` | 全部产物（不进 git） |
+| `evidence/` | 论文要引的实验证据（**进 git**，因为不一定重跑得出来） |
+| `external/` | 第三方仓库的 symlink（EgoInfinity / HaWoR），**里面不改代码** |
+| `envs/` | 三个 venv 的 symlink + 依赖清单 |
+| `docs/` | 下面这些文档 |
 
-**2. `src/` 里不许出现绝对路径字面量。** 重构前有 40 个 `.py` 散着 `/mnt/vlm/fanshaoheng`，
-换机器或搬目录就全碎。`tests/test_no_hardcoded_paths.py` 0.1 秒跑完，当场报出来 ——
-写成测试而不是写在文档里，因为"约定"会被下一次赶工时的一行硬编码悄悄破掉。
+## 更多文档
 
-## 权重缺失 ≠ 判为不合格
+| 文档 | 什么时候看 |
+|---|---|
+| [`docs/PROJECT_LAYOUT.md`](docs/PROJECT_LAYOUT.md) | **找东西**：每个目录放什么、重要参考资料的完整路径（深度实验证据、各阶段的验收视频） |
+| [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) | **动手之前**：9 条必须遵守的工程规矩，以及各自由哪个测试钉着 |
+| [`docs/VERIFICATION.md`](docs/VERIFICATION.md) | **改完之后**：一个模块一套验收判据（为什么有的要求逐位相同，有的不能） |
+| [`docs/PITFALLS.md`](docs/PITFALLS.md) | **卡住的时候**：17 个踩过的坑，现象 → 真因 → 怎么防 |
+| [`external/patches/README.md`](external/patches/README.md) | 要动第三方仓库时：我们对上游改了什么、为什么 |
 
-`P.weights()` 查不到权重时返回 `None` 而不抛异常。调用方据此报 **unknown + 人看**，
-不能报 reject。理由是实测的：body-pose 模型的手腕统计在"纯手部"这条边界上是**反向的**
-（单手 0.25 > 双手 0.21，四个检测阈值都成立），用一个反向信号去猜，比老实承认测不出来更糟。
+## 项目状态（2026-08）
 
-## 改了质检代码之后
+- **③④⑤已跑通**，在 M7 上端到端出得了片。
+- **主线是④重定向** —— 精力集中在这里，目标是一篇论文。
+- **①②暂停自研**，等对接组内已有的第一/第三人称分类模型；现有实现能跑，先不投入。
+- 最近的一个发现还没消化：WiLoR 那条前端的两种深度策略**各错一半**（一个尺度对手形烂、
+  一个手形对整只手缩小 6.5 倍），取长补短是个待评估的新设计，详见
+  [`docs/PROJECT_LAYOUT.md` §3.2](docs/PROJECT_LAYOUT.md)。
 
-判决必须与基准逐字一致：
+## 名词表
 
-```bash
-PYTHONPATH=src envs/rt_env/bin/python -m web2robot.quality \
-    data/videos/ tests/regression/*.mp4 --out /tmp/re/qc.jsonl --viz /tmp/re/ev
-envs/rt_env/bin/python scripts/dev/diff_quality_run.py /tmp/re/qc.jsonl
-```
-
-比对**不要求数值逐位相同** —— KeypointRCNN 在 GPU 上不是逐位确定的，实测重跑一次
-`cup_cpvH8gzUTko` 的 `torso_rate` 就从 0.4828 变 0.4655（n=58，差值正好 1/58，一帧翻转）。
-判的是两件更贴近实质的事：判决字段逐字一致，以及每个参与判决的信号没有越过它的阈值。
-
-## 改了碰撞检测 / 轨迹清洗之后
-
-碰撞过滤是有限差分梯度下降、纯 CPU、没有随机源，**要求逐位相同**（比第①步那条
-"判决一致"的判据严格）。三条线各测各的：
-
-```bash
-# 1. 隔离对比：把过滤器从整条链里拽出来，喂同一份输入跑旧/新两份实现
-envs/rt_env/bin/python scripts/dev/diff_collision_migration.py
-
-# 2. 端到端：同 seed 跑两遍，trajectory.npz 每个 key 逐位相同、robot_sim.mp4 md5 相同
-# 3. 出四宫格看画面（源视频 / 不开碰撞 / 新代码 / 旧代码）
-scripts/dev/render_quad.sh ...
-```
-
-端到端之所以不能单独作为判据：上游锚点的随机性会把迁移带来的差异**掩盖或伪造**成
-几十度的关节角差 —— 第一次跑就被这个骗过，以为迁移改坏了 108°。
-
-## 改了重定向兜底 / 锚点采样之后（`src/web2robot/retarget/`）
-
-同样三条线，但这里多一个"参照物"的讲究：`tests/test_retarget_modules.py` 里
-`_old_*` 那几个函数是**迁移前 `test.py` 内联版的逐字复制，故意没整理**。整理它就等于
-把参照物改成了被测物，比对就不作数了 —— 文件头的注释写着"勿整理"，请当真。
-
-```bash
-# 1. 隔离对比（合成输入，秒级，不需要 external/）：40 个用例
-envs/rt_env/bin/python -m unittest tests.test_retarget_modules -v
-
-# 2. 隔离对比（真实片段，需要 external/）：12 个数组 + 叠字逐位比
-envs/rt_env/bin/python scripts/dev/check_fallback_vs_baseline.py
-#   期望 11 个片段全部"逐位一致 ✓"，ours_webapple 那段整段单手→两边都拒掉
-
-# 3. 端到端 seed-0，再出四宫格看画面
-scripts/dev/render_compare_grid.py --runs ... --out outputs/dev/compare_grid_retarget/
-```
-
-合成输入那份有一个用例专门断言"三档补洞 + 判坏"四种状态都被打到了
-（`test_the_synthetic_input_actually_exercises_all_three_branches`）——
-**参照物再准，输入没打到分支也证明不了什么**。
-
-## 改了感知前端之后（`src/web2robot/perception/`）
-
-分两层，因为变更理由不同：`to_clip.py` 是**下游的输入契约**（EgoInfinity clip 目录），
-跟用哪个前端无关；`hawor.py` / `wilor.py` + `moge.py` 是一个前端一个。前端的函数
-（`run_mano` / `load_slam_cam` / WiLoR 的 `predict` / MoGe 的 `infer`）是**参数注入**
-进来的，所以单测不需要 GPU、不需要 checkpoint、不需要第三方仓库。
-
-```bash
-envs/rt_env/bin/python -m unittest tests.test_perception_modules -v   # HaWoR，20 个用例
-envs/rt_env/bin/python -m unittest tests.test_wilor_modules -v        # WiLoR+MoGe，40 个
-```
-
-两处**错了不报错**的地方由测试钉住，都是实际会咬人的：
-
-1. `world_to_camera` 的 einsum 下标顺序。转置反了相当于用逆旋转，手跑到相机后面、
-   深度全负，但流水线照样跑到底出片。所以有一个用例和最笨的三重循环对齐，
-   另一个用例断言"转置版结果确实不同"—— 否则第一个用例只是在测 einsum 会不会跑。
-2. `hand_joints.bin` 的形状/dtype 与 `hand_meta.json` 的 `joints_shape` 一致。
-   上游是 `np.fromfile` + reshape，不一致**不抛异常**，只会 reshape 出错位的轨迹。
-
-还有一条约定：缺失关节填 **NaN 而不是 0** —— 0 是合法的相机系坐标，而
-`trajectory/traj_cleanup.py` 正是靠 NaN 找空洞的。左手固定 slot 0、右手 slot 1，
-不压缩空 slot：上游按 slot 取手，压缩会让片段中途换手，IK 照样解得出来，几乎看不出来。
-
-### WiLoR+MoGe 这条前端（`wilor.py` + `moge.py`）
-
-它是**兜底**那条：HaWoR 靠 SLAM，条件不满足时整段失败；WiLoR 逐帧检测，从不崩溃只少
-检出几帧。代价是 WiLoR 自己没有度量深度，得外挂 MoGe，而这有两条历史实现，
-**各错一半**（ABF12 前 30 帧实测）：
-
-| | 骨长均值（真手 2~4cm） | 骨长逐帧变异（真手 ~0） |
-|---|---|---|
-| `--depth-mode pointmap` | 2.94 cm ✓ | 5.7% ✗ 手形被深度噪声撕开 |
-| `--depth-mode global-scale` | 0.45 cm ✗ 缩小约 6.5 倍 | 0.5% ✓ |
-
-所以**两条策略的"开合"数字不可比**，也都不能直接当结论用。想看图：
-
-```bash
-envs/perception_env/bin/python scripts/dev/viz_wilor_depth_modes.py \
-  --clips outputs/clips/<pointmap> outputs/clips/<globalscale> \
-  --rgb <图片目录> --out outputs/viz/wilor_depth_modes.mp4
-```
-
-三个必须知道的坑：
-
-1. **`sample_pointmap` 用 `round`，`sample_depth` 用 `int()` 截断** —— 差半个像素，
-   是从两个原脚本照抄的。"顺手统一"会改掉 `evidence/` 里 11.0 cm 那个数，而代码照样跑。
-   前者出画时给 NaN，后者会 clip 到边缘像素返回一个编出来的深度，也是故意保留的差异。
-2. **反投影必须用取整后的像素**（`pixel_index`）。深度是在整数像素处取的，用亚像素坐标
-   反投影得到的 XY 和深度不对应，误差只有半像素量级，肉眼和单测都容易放过去。
-3. **`HF_HOME` 必须覆盖**。这台机器的 shell 把它指向共享的 `/mnt/vlm/common/cache`
-   （我们没写权限），MoGe 权重其实缓存在 `$HOME/.cache/huggingface`。不覆盖会报
-   `PermissionError: .../models--Ruicheng--moge-2-vitl-normal` —— 看着像"权重没下载"，
-   其实是 hf_hub 想在只读目录里建缓存。`scripts/s3_to_clip.sh` 已经替你设了。
-
-## 论文里的数字改了之后（`evidence/` + `src/web2robot/eval/`）
-
-`evidence/` 里放的是论文要引的实验证据，**进 git**，和 `outputs/` 的区别是它不一定
-重跑得出来（外部数据集会被清、第三方 checkout 会被 `git clean`、3 GB checkpoint 不在库里）。
-规矩写在 [`evidence/README.md`](evidence/README.md)，一句话版：**存原始测量值不存结论数字，
-秒级可复核，每个数都有测试钉着。**
-
-```bash
-envs/rt_env/bin/python -m unittest tests.test_depth_benchmark -v   # 19 个用例，0.3 秒
-envs/rt_env/bin/python scripts/dev/render_depth_benchmark_fig.py   # 重画汇总图
-```
-
-这份测试的作用和别的不一样：它不防"代码改坏"，防的是**论文里的数字和仓库里的证据
-悄悄脱钩**。所以断言写的是具体数值不是"大于小于" —— 把中位偷偷改成均值，
-ABF12 的 11.0 会变 11.26、SMu41 的 3.5 会变 6.7，测试当场变红（验证过）。
-
-引用那张深度误差表的时候有两句话必须一起写上，都钉在 `TestProvenance` 里：
-
-- **HaWoR 的度量尺度是它每段现估的**，三条序列量到 0.19 / 2.34 / 3.92，差 20 倍。
-  重跑拿到别的尺度，整张表就会变 —— 先查尺度再怀疑别的。
-- **HaWoR 用的是默认 focal 600，WiLoR 那条用了 HO-3D 的真 `camMat`。** 也就是说
-  这份对比对 WiLoR 有利，而 WiLoR 仍差一个量级；方向因此更稳，但不能不提。
-
-出处（那三次运行的 stdout，22 KB）压在
-[`evidence/depth_benchmark_ho3d/provenance/`](evidence/depth_benchmark_ho3d/provenance/)。
-
-## 改了 M7 的机器人定义（`src/web2robot/robots/m7/` 或 `assets/robots/m7/`）之后
-
-两个验收脚本，输出要和上一次逐字节一致；`hand_frame` 那条约定尤其不能动：
-
-```bash
-scripts/dev/m7_tool.sh verify_m7_mjx_fk.py            # 期望 0.0000 mm / 0.0000 deg  MATCH ✓
-scripts/dev/m7_tool.sh check_handframe_convention.py  # 期望 m7 左手 finger=+y thumb=-x palm=+z，右手镜像
-
-# 再加一档：拿一段真实重定向轨迹逐帧验，而不是只验资产里写死的 home 姿态
-scripts/dev/m7_tool.sh check_handframe_convention.py \
-    --traj outputs/legacy_runs/runs/m7/validation/fill_jar
-#   期望 "违反约定的帧: 0/216 ✓"，且两只手整段各只出现过一种轴向组合
-#   （--traj 要给绝对路径或相对**上游 retarget/** 的路径，m7_tool.sh 会 cd 过去）
-```
-
-**`hand_frame` 的轴向是 finger+y / thumb−x / palm+z（左手），右手镜像。**
-2026-07-24 吃过一次亏：检查脚本只验左手、还用了退化的 r2 body，错误地得出"两只手同
-一套约定"，结果 M7 右手手掌/拇指被建成翻了 180°。现在脚本两只手都验、拿 g1/r2 当参照
-断言镜像关系，`tests/test_m7_robot.py` 里还有一份秒级回归版。**永远不要只验一侧。**
-
-还有一条只能靠跑才发现的：**动完 M7 资产的位置，删掉旧目录之后必须再跑一次端到端。**
-上游有拼接出来的资产路径（`_ROBOTS_DIR / "m7" / "m7.xml"`），grep 找不到，而删除之前
-跑的端到端会悄悄读旧文件、绿得很好看。详见 `external/patches/README.md`。
-
-`m7_mjx.xml` 是生成物（`scripts/dev/generate_m7_mjx.py`），但**重跑生成器不会得到逐位
-相同的文件** —— 原因和处置写在那个脚本的头部注释里，动它之前先看。
-
-## 产物只许落 `outputs/`，不许落 `external/`
-
-这条和"`src/` 里不许有绝对路径字面量"同级，理由同样是量出来的：
-
-**上游 `test.py` 的 `--out` 默认值是 `<clip_parent>/<robot>/`** —— 把产物写在输入素材旁边。
-再叠上薄壳**必须** `cd` 到上游 `retarget/`（它的 config / checkpoint 路径都是相对自己算的），
-于是任何相对的 `--out` 也一起落进去。两件事一叠，实测结果是 `external/EgoInfinity/retarget/`
-下攒了 408 MB、243 个 mp4/npz，而上游 git 只跟踪其中 1 个 —— 其余全是我们跑的；
-同期 `outputs/` 里只有一个目录。
-
-危害不只是乱：`external/` 是第三方 checkout，一次 `git clean -xdf` 或重新 clone
-就把结果全带走 —— **这正是这次重构最初的动因**；而且产物和素材混在同一棵树里之后，
-"哪份是官方素材、哪份是我们跑的"只能靠 mtime 猜。
-
-所以判据写成了代码，不是文档：
-
-```python
-P.check_output_dir(path)     # 解析相对路径 + 拒绝 external/ 内的落点，违反就 SystemExit
-```
-
-四个写入口都过这道闸：`s4_retarget.sh`（cd **之前**把 `--out` 按调用方 cwd 转绝对路径，
-没给就顶掉上游默认值，落 `outputs/retarget/<片段名>/`）、上游 `test.py`（兜底）、
-`scripts/dev/_devcli.py`（默认落 `outputs/dev/<run 名>/`，7 个出片脚本共用）、以及
-`scripts/dev/render_compare_grid.py`（自己一套 `--runs` / `--out`，因为它要同时读三台
-机器人的 run）。`tests/test_outputs_not_in_external.py` 钉住结果：判据不是"数 mp4"，
-而是**上游 git 认不认** —— 含 `robot_sim.mp4`/`trajectory.npz` 又不被上游跟踪的目录，
-就是我们的产物躺在别人家里。
-
-`external/` 下现在只剩输入：每个片段的 4 个输入文件（`depth.mp4` / `hand_joints.bin` /
-`hand_meta.json` / `scene.json`）和 `runs/m7/taskspace*/`（训练 run + checkpoint，
-上游 `train.py` 写在那里）。两者都已在 `configs/paths.yaml` 注册
-（`roots.egoinfinity_clips` / `weights.m7_root_model`），代码不再用相对路径引它们。
-
-2026-08-10 搬出来的 316 MiB 存量产物在 `outputs/legacy_runs/`，**保持原相对路径、
-没有重命名或重组**，逐文件清单见 `outputs/legacy_runs/MANIFEST.tsv`。搬迁过程中撞到
-两个 root 拥有的 run 目录（早先有人用 root 跑过），`mv` 会 copy 成功但删不掉源 ——
-所以搬迁脚本改成"copy 完逐文件 md5 比对，比对通过才删源"，可重复跑。脚本本身留在
-`scripts/dev/move_legacy_outputs.py`（`--dry` 只看清单），现在再跑是"待处理 0 项"。
-
-## 一条贯穿全流程的规矩：指标 ≠ 画面
-
-数值对了不等于数据可信。任何一步改完都要出片或看 contact sheet 用眼睛确认，别只看表格 ——
-IK 成功率 100% 的片段照样可能手穿进躯干。视频统一 h264 / yuv420p，否则 VSCode 里放不出来。
-
+| 词 | 意思 |
+|---|---|
+| **重定向 / retarget** | 把人的动作换算成机器人的动作。难点在于人和机器人的身体结构不同 |
+| **IK（逆运动学）** | 已知手该到哪个位置姿态，反解出每个关节要转多少度 |
+| **MANO** | 手部的标准参数化模型，21 个关节点。手部重建方法基本都输出 MANO |
+| **MJCF / URDF** | 两种机器人模型文件格式（关节、连杆、碰撞体、mesh）。MJCF 是 MuJoCo 的 |
+| **SLAM** | 从视频同时估相机轨迹和场景结构。相机不动就没有视差，SLAM 会失效 |
+| **clip 目录** | 本项目里指③的产物格式，重定向框架的输入（那三个文件） |
+| **四宫格** | 验收用的对比视频：源视频 / 改动前 / 改动后 / 对照，并排放一屏 |
+| **M7** | 我们的目标人形机器人。双臂各 7 自由度，双手各 12 自由度 |
+| **HO-3D** | 一个带真值的手-物交互数据集，用来量深度误差 |
