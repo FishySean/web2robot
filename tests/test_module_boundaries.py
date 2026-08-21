@@ -81,6 +81,51 @@ class TestCollisionPackage(unittest.TestCase):
         self.assertIn("ok", r.stdout)
 
 
+class TestArmTorsoPresets(unittest.TestCase):
+    """按路线分开的碰撞过滤参数：neural 那组必须是空的。
+
+    "空" 是判据本身而不是实现细节 —— neural 路线上已经发表的 13 段表、demo 视频、
+    README 素材全是旧参数出的，预设里只要多出一个键，那些数字就全部失效。字节级
+    的凭据在 scripts/dev/check_neural_bytes.sh，这里守的是不用跑 GPU 也能守住的
+    那一半。
+    """
+
+    def test_presets(self):
+        import subprocess
+        code = (
+            "import inspect;"
+            "from web2robot.collision.arm_torso_filter import ArmTorsoFilter;"
+            "from web2robot.collision.presets import (arm_torso_preset, MESH_HALF,"
+            " NEURAL, GRID);"
+            # neural = 原样构造
+            "assert arm_torso_preset('neural') == {}, arm_torso_preset('neural');"
+            # 预设的键必须真是构造参数，否则 TypeError 会在跑到一半的时候才炸
+            "params = inspect.signature(ArmTorsoFilter.__init__).parameters;"
+            "assert set(GRID) <= set(params), set(GRID) - set(params);"
+            # 返回的是副本：调用方改它不该污染表
+            "p = arm_torso_preset('grid'); p['enter_thresh'] = 99;"
+            "assert arm_torso_preset('grid')['enter_thresh'] != 99;"
+            # 语义不变量（不是抄一遍数字）：标定盒不得大于真实网格 AABB —— 比网格
+            # 还大的代理不可能是"零点=真接触"的那种标定；门槛不得比历史的 4cm 更松；
+            # 余量非负；触发深度 (enter-margin) 非负，否则等于要求"还没碰就修"。
+            "assert all(a <= b for a, b in zip(GRID['torso_half'], MESH_HALF)),"
+            " (GRID['torso_half'], MESH_HALF);"
+            "assert 0 < GRID['enter_thresh'] <= 0.04, GRID['enter_thresh'];"
+            "assert GRID['margin'] >= 0;"
+            "assert GRID['enter_thresh'] - GRID['margin'] >= 0;"
+            # 没标定过的路线要炸，不能悄悄套用 grid 的数
+            "\ntry:\n arm_torso_preset('nope'); raise SystemExit('should raise')\n"
+            "except ValueError: pass\n"
+            "print('ok')"
+        )
+        r = subprocess.run([str(_interpreter()), "-c", code],
+                           capture_output=True, text=True,
+                           env={"PYTHONPATH": str(REPO / "src"),
+                                "PATH": "/usr/bin:/bin", "HOME": str(Path.home())})
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        self.assertIn("ok", r.stdout)
+
+
 def _interpreter() -> Path:
     import sys
     sys.path.insert(0, str(REPO / "src"))

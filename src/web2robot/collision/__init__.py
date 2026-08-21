@@ -28,6 +28,9 @@ contacts，两者别搞混。
   （``M7CapsuleModel``）、每手 11 个球（``HandSphereModel``）。
 - ``arm_torso_filter`` —— 臂/指-躯干纠正，只动犯规那一侧的手臂。
 - ``dual_hand_filter`` —— 手-手纠正，比躯干那条**更保守**。
+- ``presets`` —— 按底座求解路线（``--root_solver neural`` / ``grid``）分开的
+  标定参数。两条路线底座落点不同、手臂贴身的方式也不同，一套余量伺候不了两边；
+  ``neural`` 那组是**空的**，即保持历史行为逐位不变。
 
 保守策略是量出来的，不是口味问题：双手相触多数是有意的双手抓握（实测交叠最深
 仅 −2.5 cm，画面确认全是合抱罐子、胸前双手操作），强行推开会毁掉抓握；而手臂
@@ -48,5 +51,7 @@ contacts，两者别搞混。
 from .capsule_collision import M7CapsuleModel, HandSphereModel
 from .arm_torso_filter import ArmTorsoFilter
 from .dual_hand_filter import DualHandFilter
+from .presets import arm_torso_preset
 
-__all__ = ["M7CapsuleModel", "HandSphereModel", "ArmTorsoFilter", "DualHandFilter"]
+__all__ = ["M7CapsuleModel", "HandSphereModel", "ArmTorsoFilter", "DualHandFilter",
+           "arm_torso_preset"]

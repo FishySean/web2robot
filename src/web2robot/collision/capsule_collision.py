@@ -98,8 +98,23 @@ class M7CapsuleModel:
     }
     TIP_RADIUS = 0.012
 
-    def __init__(self, model):
+    def __init__(self, model, torso_half=None, tip_radius=None):
+        """`torso_half` / `tip_radius` override the proxy's safety margins.
+
+        Both default to the class attributes above, so an unparameterised
+        instance behaves exactly as before.  They are constructor arguments (not
+        edited constants) because the two root-pose routes need *different*
+        margins: `grid` puts the base close to the hands, which changes how arms
+        approach the trunk, so a box calibrated on `neural` mis-fires there.
+        Calibration (scripts/dev/sweep_arm_torso_params.py) drives the very same
+        arguments the pipeline uses — a swept value that the pipeline could not
+        express would be a value we cannot ship.
+        """
         self.model = model
+        if torso_half is not None:
+            self.TORSO_HALF = np.asarray(torso_half, dtype=np.float64)
+        if tip_radius is not None:
+            self.TIP_RADIUS = float(tip_radius)
         bid = lambda n: mujoco.mj_id2name and mujoco.mj_name2id(
             model, mujoco.mjtObj.mjOBJ_BODY, n)
         self.torso_bid = bid(self.TORSO_BODY)

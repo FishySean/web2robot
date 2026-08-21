@@ -44,6 +44,9 @@ class ArmTorsoFilter:
         fd_eps:       float = 1e-3,
         include_fingers: bool = True,   # fold fingertip-in-torso into detection
         smooth_sigma: float = 2.0,      # temporal smoothing of corrected frames [frames]
+        torso_half=None,                # override the torso proxy box half-extents [m]
+        tip_radius: float | None = None,  # override the fingertip sphere radius [m]
+        margin:       float = 0.0,      # clearance demanded of a corrected frame [m]
         verbose:      bool  = True,
     ):
         self.enter_thresh = enter_thresh
@@ -54,6 +57,7 @@ class ArmTorsoFilter:
         self.max_iter = max_iter
         self.lr = lr
         self.fd_eps = fd_eps
+        self.margin = margin
         self._include_fingers = include_fingers
         self.smooth_sigma = smooth_sigma
         self.verbose = verbose
@@ -65,7 +69,8 @@ class ArmTorsoFilter:
         self._env.reset()
         self._model = self._env.model
         self._data  = self._env.data
-        self._cm = M7CapsuleModel(self._model)
+        self._cm = M7CapsuleModel(self._model, torso_half=torso_half,
+                                  tip_radius=tip_radius)
 
         self._hand_bid = {
             "left":  mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, "left_hand_frame"),
@@ -73,7 +78,9 @@ class ArmTorsoFilter:
         }
         if verbose:
             print(f"[ArmTorsoFilter] enter_thresh={enter_thresh:.3f}m "
-                  f"w_pen={w_pen} w_ee={w_ee} w_prox={w_prox}")
+                  f"margin={margin:.3f}m "
+                  f"w_pen={w_pen} w_ee={w_ee} w_prox={w_prox} "
+                  f"torso_half={np.round(self._cm.TORSO_HALF, 4).tolist()}")
 
     # ── kinematics helpers ──────────────────────────────────────────────────
 
@@ -82,8 +89,25 @@ class ArmTorsoFilter:
         mujoco.mj_forward(self._model, self._data)
 
     def _sdf(self, side: str) -> float:
+        """Signed distance of this arm to the torso, shifted by `margin`.
+
+        `margin` is the clearance a corrected frame must reach (the descent stops
+        at `_sdf >= 0`, i.e. `margin` metres clear of the proxy surface).  It is
+        separate from `enter_thresh` on purpose: with a proxy box calibrated so
+        that distance 0 coincides with real mesh contact, the two knobs mean two
+        different physical things, and a single number cannot express both —
+
+            correct a frame once it is deeper than  (enter_thresh - margin)
+            push it out until it clears by          margin
+
+        Before calibration the oversized box supplied the clearance implicitly,
+        so `enter_thresh` was silently doing both jobs and neither could be
+        tuned without moving the other.  Default 0.0 keeps that old behaviour
+        bit-for-bit.
+        """
         return self._cm.arm_torso_penetrations(
-            self._data, include_fingers=self._include_fingers)[side]
+            self._data, margin=self.margin,
+            include_fingers=self._include_fingers)[side]
 
     def _hand_pos(self, side: str) -> np.ndarray:
         return self._data.xpos[self._hand_bid[side]].copy()
