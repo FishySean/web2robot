@@ -14,12 +14,17 @@ numpy / mujoco / scipy，**零上游 import**；`test.py` 那 +190 行的 diff �
 
 ## egoinfinity-modified.patch
 
-2026-08-10 `retarget/` 迁移后重新导出，覆盖 6 个被改过的**已跟踪**文件
-（6 files changed, 233 insertions(+), 15 deletions(-)，23926 字节）。
+2026-08-20 加第二台机器人 L3.4（`--robot l3_4`）之后重新导出，覆盖 6 个
+被改过的**已跟踪**文件（6 files changed, 520 insertions(+), 32 deletions(-)，45256 字节）。
 
-**注意这个数字是往下走的**：上一版 313 insertions，这一版 233。迁移做对了的话
-patch 就该变小 —— 逻辑挪进 `src/web2robot/`，上游只剩接线。哪天它又开始变大，就是
-有人在往上游文件里写实质逻辑了。
+**这一版数字是往上走的，原因见下面 2026-08-18 起的五节** ——
+上一版 459
+insertions。一般来说 patch 变大就是有人在往上游文件里写实质逻辑，所以每次变大都必须在
+这里写清楚多出来的是什么；这五次多的分别是一个 if/else 开关＋把新求解器包成 callable 的
+接线、两个默认关闭的开关、一处"去 `presets.py` 查表 + 允许 CLI 覆盖"的接线、和一台新机器人
+在注册表/IK/手部重定向器三处的注册，肉仍然在
+`src/web2robot/retarget/root_grid.py`、`src/web2robot/twin/`、`src/web2robot/refine/`、
+`src/web2robot/collision/presets.py` 和 `src/web2robot/robots/l3_4/`。
 
 ```bash
 cd external/EgoInfinity && git apply ../patches/egoinfinity-modified.patch
@@ -165,3 +170,131 @@ out_dir = Path(args.out).resolve() if args.out else clip_path.parent / robot_nam
 ```
 
 同样的判据有测试钉着：`tests/test_outputs_not_in_external.py`。
+
+### 2026-08-18 `--root_solver`：patch 从 233 行长到 342 行，多出来的是开关不是逻辑
+
+新增的第二条根位姿路线（静态网格搜索，Qwen-RobotManip 公式 3）在
+`src/web2robot/retarget/root_grid.py`，**零上游 import**、纯 numpy 单测
+（`tests/test_root_grid.py`，44 例）。上游 `test.py` 里多出来的是：
+
+| 多出来的 | 行数（`git diff -w`） | 是什么 |
+|---|---|---|
+| 7 个 `--grid_*` / `--root_solver` argparse 选项 | ~30 | 参数接线（含 `--grid_tie_break`，帮助文本里写了 66.7% vs 100% 那笔账） |
+| `if args.root_solver == "grid":` 分支 | ~55 | 把上游 FK / IK / `cam_to_root_targets` 包成 callable 传给我方求解器 |
+| 原 Steps 1+3+4+5 挪进 `else:` | 0（`-w` 下算 context） | 纯缩进 |
+
+所以 `test.py` 从 151 → 233 insertions，全 patch 233 → 342。分支体里没有一条
+"方法"语句：关键帧怎么选、网格怎么排、剪枝、平局怎么破，全在我方模块里。
+
+判据仍然是"分支里有没有出现只有这里才有的逻辑"，不是行数本身。这次多出来的
+55 行里唯一值得盯的是两个闭包（`_fk_norm` / `_converged`）——它们只做
+tensor 装箱和 `.cpu().numpy()`，判据（`info["converged"]`）是上游的，没有另立标准。
+
+`r_max` 在这里**现量**（`estimate_reach` 打 FK，M7 实测 1.007 m），不写死常数，
+换机器人不用改上游文件。
+
+校验照旧：`git show HEAD:<file>` 铺进 `/tmp/patch_replay` → replay 这个 patch →
+和真实工作区逐字节 md5 比对，**6/6 完全一致**（2026-08-19 复核过）。
+
+### 2026-08-19 `--object_tracking`：342 → 367，多出来的 25 行全是接线
+
+物体 6D 位姿跟踪（EgoEngine arXiv 2606.12604 §3.1 数字孪生）在
+`src/web2robot/twin/`，**零上游 import**、也不反向依赖 `root_anchor.py` /
+`root_grid.py`，纯 numpy 单测（`tests/test_twin_object_pose.py`，58 例）。
+上游 `test.py` 里多出来的是：
+
+| 多出来的 | 行数 | 是什么 |
+|---|---|---|
+| `--object_tracking off\|on` + `--object_source` | ~10 | 参数接线，默认 `off` |
+| `if args.object_tracking == "on":` 调用点 | ~15 | 调 `track_objects()` / `save_object_poses()`，帧数帧率用 `seq` 的口径传，保证和手部轨迹逐帧对齐 |
+
+**默认 off 的含义是"一行都不执行"，不是"执行了但结果一样"** —— import 也在 if 里面，
+不传参数时 `web2robot.twin` 根本不会被加载。这一条是量出来的：同一段片段
+（`-1r9yl-P-Ao_86.3_90.8`，M7 / neural / seed 0）跑 base / off / on 三遍，
+`trajectory.npz`、`root_frames.npz`、`metrics.npz`、`robot_sim.mp4`、`input_viz.mp4`
+五个产物 md5 三份全同，`on` 只多出一个 `object_poses.npz`
+（跑法：`scripts/dev/check_object_tracking_bytes.sh`）。
+
+### 2026-08-19 `--action_refine`：367 → 428，多出来的 61 行是开关＋两处取数
+
+动作分级精修的判决（EgoEngine §3.2.2 自适应模式切换）在 `src/web2robot/refine/`，
+**零上游 import**、纯 numpy 单测（`tests/test_refine_action.py`，55 例）。
+上游 `test.py` 里多出来的是：
+
+| 多出来的 | 行数 | 是什么 |
+|---|---|---|
+| `--action_refine none\|mpc\|rl` + 4 个 `--refine_*` | ~25 | 参数接线，默认 `none`。λp / λR / 每帧预算论文都没给数值，所以做成参数 |
+| `run()` 开头的参数矛盾检查 | ~8 | `mpc\|rl` 没配 `--object_tracking on` 就当场 `SystemExit`，**不静默降级** |
+| `if args.action_refine != "none":` 调用点 | ~28 | 取两样东西喂给我方模块：IK 目标（`left_pos/left_quat` …）和 IK 实际（`opt.ik_*_traj._fk(q)`），外加 `root_frames` 用来换系 |
+
+那个 `_fk7` 闭包是唯一值得盯的地方：它只做 tensor 装箱和 `.cpu().numpy()`，用的是上游
+自己的 `_fk`，没有另写一份运动学。**比的是 IK 残差（实际 FK vs 交给 IK 的目标）**，
+不是"机器人手 vs 人手"—— 后者本来就差一截（`workspace_center` 会整体平移目标），
+拿绝对位姿比没有意义。这个判断写在调用点的注释里，别在重构时顺手改掉。
+
+同一道"默认关闭 ⇒ 逐字节不变"的检查：`scripts/dev/check_action_refine_bytes.sh`
+跑 base / `none` / `on+none` / `on+mpc` 四遍，2026-08-19 实测原有 5 个产物 md5 四份
+全同；`on+none` 只多 `object_poses.npz`，`on+mpc` 再多
+`action_refine.json` / `action_refine.npz` / `hand_poses.npz`。
+
+### 2026-08-20 `--atf_preset`：428 → 459，多出来的 31 行是"按路线取标定参数"的接线
+
+`--root_solver grid` 把底座搜到手边，手臂贴身的角度和频次都和 `neural` 不同，所以臂-躯
+代理盒的余量得分路线标定（13 段实测残留穿躯 28.9% vs 23.8%）。标定表在
+`src/web2robot/collision/presets.py`，标定脚本
+`scripts/dev/sweep_arm_torso_params.py`。上游 `test.py` 里多出来的是：
+
+| 多出来的 | 行数 | 是什么 |
+|---|---|---|
+| `--atf_preset` + `--atf_torso_half/enter_thresh/margin` | ~20 | 参数接线。`--atf_preset auto`（默认）跟着 `--root_solver` 走；`legacy` = 过滤器自己的未标定默认值，专门留给"调参前 vs 调参后"的 A/B |
+| `ArmTorsoFilter(...)` 构造点前的 5 行 | ~11 | 取预设 + 让显式 CLI 覆盖压过预设 |
+
+**没有一个数字写在上游文件里** —— 盒半长和两个门槛全在 `presets.py`，上游只知道"去查
+表"。这一点是故意的：换机器人或重新标定时不该动 patch。
+
+`neural` 那条路线的预设是**空字典**，即"照旧构造"。这不是口头承诺：
+`scripts/dev/check_neural_bytes.sh` 同一段片段（`-1r9yl-P-Ao_86.3_90.8`，M7 / neural /
+seed 0 / 两条碰撞过滤都开）跑 base 和 `--atf_preset auto` 两遍，2026-08-20 实测
+`trajectory.npz` / `metrics.npz` / `robot_sim.mp4` md5 两份全同
+（`205d96dba4a701e4be19a88ff1ec0483` 是那个 mp4）。另有不用 GPU 的一半守在
+`tests/test_module_boundaries.py::TestArmTorsoPresets`（预设为空、键必须真是构造参数、
+返回副本、盒不得大于真实网格 AABB、没标定过的路线要抛而不是套用 grid 的数）。
+
+校验照旧：`git show HEAD:<file>` 铺进 `/tmp/replay` → replay 这个 patch → 和真实工作区
+逐字节 md5 比对，**6/6 完全一致**（2026-08-20 复核过，41857 字节）。
+
+### 2026-08-20 第二台机器人 L3.4：459 → 520，多出来的 61 行是三处注册，一个数字都没写在上游
+
+L3.4（rel3_4）的机器人定义在 `src/web2robot/robots/l3_4/`（五个模块，**零上游 import、
+也不 import `robots/m7/`**），资产由 `scripts/dev/build_l3_4_assets.py` 从厂家原包生成
+（七步自检），单测 `tests/test_l3_4_robot.py`（12 例）。上游三个文件里多出来的是：
+
+| 文件 | 行数 | 是什么 |
+|---|---|---|
+| `sim/robots/__init__.py` | +14 | 注册表三张表各加一行 `"l3_4"`，外加 `RobotConfig(**ENV_SPEC)` 一行把我方纯 dict 包成上游 dataclass |
+| `kinematics/wrist_ik.py` | +23 | `RobotIKConfig.l3_4(side)`：函数体内 import 我方 `ik_spec()` + `MJCF_PATH`，把限位转 `torch.tensor` |
+| `kinematics/wilor_retargeter.py` | +24 | `_l3_4_12dof_from_keypoints(side)`（把我方 `HAND_JOINT_SPEC` 包成 `RobotHandConfig`）+ 工厂里一个 `if robot == "l3_4"` |
+| `scripts/test.py` / `scripts/train.py` | ±0 | `--robot` 的 `choices` 里多一个字符串（替换同一行，所以 insertions 没变） |
+
+**链根、末端帧、7×2 臂限位、12 个手指限位、锁死的 17 个自由度，一个数字都不在上游文件里。**
+和 M7 同一个套路：上游只知道"去 `web2robot.robots.<name>` 取"。换机器人不该动这个 patch，
+这一条由 `tests/test_l3_4_robot.py::TestUpstreamWiring` 钉住（造出 `RobotIKConfig.l3_4`
+看 `mjcf_path` 存不存在、和我方纯数据表逐位相等，拼接出来的路径也躲不掉）。
+
+方法名必须**恰好**是 `l3_4`：上游 dispatch 是 `getattr(RobotIKConfig, cfg["ik_robot"])`
+（`models/root_opt.py` / `scripts/train.py` / `scripts/viz_trajs.py` 各一处），名字错了不会在
+import 时报，而是跑到建 IK 串链那一步才 `AttributeError`。同理**不要**图省事写
+`l3_4 = m7`（alias）—— 真源是各自的 MJCF，alias 会在哪天两台机器人限位真的分叉时静默地
+继续用错的那份。
+
+`--robot` 默认值仍是上游原样，choices 只增不改。但"对 M7 没影响"这句不能只靠读代码：
+`sim/robots/__init__.py` 里那两行 `from web2robot.robots.l3_4 import ...` 是**模块顶层**的，
+跑 M7 也会执行（加载 L3.4 的 MJCF 路径、构造 `RobotConfig`）。所以照旧过一道字节级检查：
+[`check_m7_unchanged_by_l3_4.sh`](../../scripts/dev/check_m7_unchanged_by_l3_4.sh) 拿这份代码
+再跑一遍 M7（同片段 / 同 seed / neural / 两条碰撞过滤都开），和 L3.4 改动**之前**留下的
+`outputs/dev/neural_bytecheck/base/` 比 md5 —— 2026-08-20 实测
+`trajectory.npz` / `metrics.npz` / `robot_sim.mp4` **三个 SAME**
+（那个 mp4 仍是 `205d96dba4a701e4be19a88ff1ec0483`，和上一节的数字对得上）。
+
+校验照旧：`git show HEAD:<file>` 铺进 `/tmp/replay_l34` → replay 这个 patch → 和真实工作区
+逐字节 md5 比对，**6/6 完全一致**（2026-08-20，45256 字节）。

@@ -1,8 +1,8 @@
 diff --git a/retarget/kinematics/wilor_retargeter.py b/retarget/kinematics/wilor_retargeter.py
-index b54579d..cf8db6a 100644
+index b54579d..15215ba 100644
 --- a/retarget/kinematics/wilor_retargeter.py
 +++ b/retarget/kinematics/wilor_retargeter.py
-@@ -380,8 +380,26 @@ def _r2_18dof_from_keypoints(side: str) -> RobotHandConfig:
+@@ -380,8 +380,47 @@ def _r2_18dof_from_keypoints(side: str) -> RobotHandConfig:
      ])
  
  
@@ -25,25 +25,49 @@ index b54579d..cf8db6a 100644
 +    from web2robot.robots.m7 import HAND_JOINT_SPEC
 +    return RobotHandConfig(joints=[JointMapping(**d) for d in HAND_JOINT_SPEC])
 +
++
++def _l3_4_12dof_from_keypoints(side: str) -> RobotHandConfig:
++    """RoboEra L3.4 (rel3_4) 5-finger hand: 12 DoF per hand.
++
++    和上面的 ``_m7_12dof_from_keypoints`` 同一个套路：那 12 行限位是 L3.4 这台机器人
++    的关节属性，跟重定向框架无关，所以放在
++    ``web2robot/robots/l3_4/hand_mapping.py``，这里只做接线。
  
++    L3.4 和 M7 装的是**同一只手**（关节名逐字相同、限位逐位相同；厂家 URDF mesh 路径
++    里那个 ``xhand`` 只是目录名，不是另一款 11 自由度的手 —— 依据写在那个模块的
++    docstring 里）。**但这里仍然是两个独立分支、取两个独立的包**：别为省两行把 l3_4
++    指到 m7 的 spec 上，那样哪天真换了手会静默用错的映射。
++
++    ``side`` 用不到：两只手的屈曲范围完全相同且都是正的（不像 G1 左右反号），
++    唯一左右镜像的 ``index_abd`` 已经用 ``left_sign=-1.0`` 表达在 spec 里。
++
++    需要 web2robot/src 在 PYTHONPATH 里（``scripts/s4_retarget.sh`` 已设好）。
++    """
++    from web2robot.robots.l3_4 import HAND_JOINT_SPEC
++    return RobotHandConfig(joints=[JointMapping(**d) for d in HAND_JOINT_SPEC])
++
++
 +# ── per-robot factory ─────────────────────────────────────────────────────────
  def get_wilor_hand_retargeter(
      robot: str,
      side:  str,
-@@ -406,5 +424,8 @@ def get_wilor_hand_retargeter(
+@@ -406,5 +445,11 @@ def get_wilor_hand_retargeter(
      if robot == "xlerobot":
          return WilorHandRetargeter(_xlerobot_jaw_from_keypoints(side), side)
  
 +    if robot == "m7":
 +        return WilorHandRetargeter(_m7_12dof_from_keypoints(side), side)
 +
++    if robot == "l3_4":
++        return WilorHandRetargeter(_l3_4_12dof_from_keypoints(side), side)
++
      raise ValueError(f"Unknown robot '{robot}'. "
                       f"Add it to wilor_retargeter.py or to _ROBOTS_WITHOUT_HANDS.")
 diff --git a/retarget/kinematics/wrist_ik.py b/retarget/kinematics/wrist_ik.py
-index 2d8dc8c..73b51c1 100644
+index 2d8dc8c..c18a481 100644
 --- a/retarget/kinematics/wrist_ik.py
 +++ b/retarget/kinematics/wrist_ik.py
-@@ -182,6 +182,31 @@ class RobotIKConfig:
+@@ -182,6 +182,54 @@ class RobotIKConfig:
              joint_limits   = _limits[side],
          )
  
@@ -72,14 +96,51 @@ index 2d8dc8c..73b51c1 100644
 +            joint_limits   = torch.tensor(_spec["joint_limits"]),
 +        )
 +
++    @staticmethod
++    def l3_4(side: str) -> "RobotIKConfig":
++        """RoboEra L3.4 (rel3_4) humanoid — one 7-DoF arm.
++
++        和上面的 ``m7`` 逐字同一个套路（链根/末端帧/限位都在
++        ``web2robot/robots/l3_4/ik_config.py``，这里只转 tensor 再包 dataclass）。
++
++        两台机器人的上肢运动学**逐位相同**，但这里仍然是两个独立的分支、取的是两个
++        独立的包 —— 一台机器人的定义不该依赖另一台的模块存在。别为了"少两行"把
++        ``l3_4`` 指到 ``m7`` 上：真源在各自的 MJCF 里，哪天 L3.4 换了手臂，这里会
++        自然分开，而 alias 会静默地继续用错的限位。
++
++        方法名必须叫 ``l3_4`` —— 调用方是 ``getattr(RobotIKConfig, cfg["ik_robot"])``。
++        """
++        from web2robot.robots.l3_4 import MJCF_PATH as _L34_MJCF, ik_spec as _l34_ik_spec
++        _spec = _l34_ik_spec(side)
++        return RobotIKConfig(
++            mjcf_path      = _L34_MJCF,
++            end_link_name  = _spec["end_link_name"],
++            root_link_name = _spec["root_link_name"],
++            joint_limits   = torch.tensor(_spec["joint_limits"]),
++        )
++
      @staticmethod
      def xlerobot(side: str) -> "RobotIKConfig":
          """XLeRobot 5-DoF SO-ARM100 arm (Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll)."""
 diff --git a/retarget/scripts/test.py b/retarget/scripts/test.py
-index f8f1b5f..6ce692f 100644
+index f8f1b5f..9b4927f 100644
 --- a/retarget/scripts/test.py
 +++ b/retarget/scripts/test.py
-@@ -130,6 +130,12 @@ def run(args: argparse.Namespace) -> None:
+@@ -126,10 +126,26 @@ def _preview_trajectory(env_vis, q_left, q_right, Q_lf, Q_rf, finger_jnames,
+ # ── main ──────────────────────────────────────────────────────────────────────
+ 
+ def run(args: argparse.Namespace) -> None:
++    # web2robot: --action_refine mpc|rl 要拿模块一的物体位姿当参考，缺了没法打分。
++    # 这里**当场退出**，不静默降级成 none —— 让人以为精修过了比直接失败危险。
++    # 放在 run() 最开头是故意的：这一跑要好几分钟，参数矛盾不该等到最后才报。
++    if getattr(args, "action_refine", "none") != "none" and \
++            getattr(args, "object_tracking", "off") != "on":
++        raise SystemExit(
++            f"--action_refine {args.action_refine} 需要同时 --object_tracking on："
++            "分级精修的打分靠的是物体位姿跟踪误差（EgoEngine §3.2.2），"
++            "没有参考位姿无从打分。加上 --object_tracking on 再跑。")
++
+     device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
      clip_path  = Path(args.clip).resolve()
      robot_name = args.robot
      out_dir    = Path(args.out).resolve() if args.out else clip_path.parent / robot_name
@@ -92,7 +153,7 @@ index f8f1b5f..6ce692f 100644
      out_dir.mkdir(parents=True, exist_ok=True)
  
      print(f"Clip : {clip_path}")
-@@ -151,6 +157,19 @@ def run(args: argparse.Namespace) -> None:
+@@ -151,6 +167,19 @@ def run(args: argparse.Namespace) -> None:
      if left_cam_np is None or right_cam_np is None:
          raise RuntimeError("Clip is missing both-hand tracking data.")
  
@@ -112,7 +173,7 @@ index f8f1b5f..6ce692f 100644
      vid_frames = load_video_frames(clip_path / "depth.mp4")
      vid_h, vid_w = (vid_frames[0].shape[:2] if vid_frames else (480, 640))
      K = {"fx": seq.focal, "fy": seq.focal,
-@@ -189,14 +208,10 @@ def run(args: argparse.Namespace) -> None:
+@@ -189,14 +218,10 @@ def run(args: argparse.Namespace) -> None:
          left_cam_ik  = left_cam_np
          right_cam_ik = right_cam_np
  
@@ -128,7 +189,7 @@ index f8f1b5f..6ce692f 100644
      _wsc           = _robot_cfg.get("workspace_center")
      _ik_robot_name = _robot_cfg["ik_robot"]
      _null_man      = 0.5 if robot_name == "franka" else 0.1
-@@ -213,10 +228,21 @@ def run(args: argparse.Namespace) -> None:
+@@ -213,28 +238,95 @@ def run(args: argparse.Namespace) -> None:
          null_weight_smo=_null_smo,
      )
  
@@ -136,25 +197,116 @@ index f8f1b5f..6ce692f 100644
 -    R_anchor, t_anchor, _ = select_best_anchor(
 -        Rs, ts, left_cam_ik, right_cam_ik, opt, _wsc,
 -        n_clusters=args.n_clusters)
-+    # ── Steps 1+3: best-of-N root anchor sampling ─────────────────────────────
-+    # 根估计器是 flow-matching 生成模型，同一段片段每次跑出的锚点不同；抽 N 次按
-+    # IK 收敛率取最好的。n_samples=1（默认）与原始单发路径完全等价。
-+    # 策略在 web2robot/retarget/root_anchor.py，这里只把两个求解器包成闭包传进去。
-+    from web2robot.retarget.root_anchor import sample_best_anchor
-+    _best = sample_best_anchor(
-+        estimate_fn=lambda: estimate_root_poses(
-+            model, left_cam_ik, right_cam_ik, g_cam_t,
-+            seq_len, seq_fps, args.window_secs, _stride, device),
-+        select_fn=lambda Rs, ts: select_best_anchor(
-+            Rs, ts, left_cam_ik, right_cam_ik, opt, _wsc,
-+            n_clusters=args.n_clusters),
-+        n_samples=args.n_samples, seed=args.seed)
-+    kf_positions, Rs, ts = _best.kf_positions, _best.Rs, _best.ts
-+    R_anchor, t_anchor  = _best.R_anchor, _best.t_anchor
-     R_global, t_global = R_anchor, t_anchor
+-    R_global, t_global = R_anchor, t_anchor
+-
+-    print(f"  anchor t={t_anchor.round(3)}  "
+-          f"max_rot_dev={max(float(Rotation.from_matrix(R_anchor.T @ Rs[k]).magnitude()) for k in range(len(Rs))):.3f} rad")
+-
+-    # ── Step 4: blend each window estimate toward best anchor ─────────────────
+-    Rs_blended, ts_blended = blend_keyframes(
+-        Rs, ts, args.torso_alpha, alpha_rot=args.torso_alpha_rot,
+-        R_anchor=R_anchor, t_anchor=t_anchor)
+-
+-    # ── Step 5: interpolate to per-frame ──────────────────────────────────────
+-    if len(kf_positions) == seq_len:
+-        R_per_frame, t_per_frame = Rs_blended, ts_blended
++    # ── Steps 1+3+4+5: 根位姿 ─────────────────────────────────────────────────
++    # 两条粒度不同的路线，--root_solver 切换：neural = 逐帧生成模型（原路径），
++    # grid = 静态网格搜索（Qwen-RobotManip 公式 3）。两边都只负责产出
++    # R_per_frame / t_per_frame（以及给渲染和 npz 用的 R_global/t_global、
++    # R_anchor/t_anchor、kf_positions），后面 Step 6 起完全共用。
++    if args.root_solver == "grid":
++        # 数学优化路线：搜一个**静态**底座位姿使关键帧 IK 可行率最大。策略全在
++        # web2robot/retarget/root_grid.py，这里只把上游的 FK / IK / 坐标变换包成
++        # callable 传进去（同 root_anchor 的做法，保持我方模块零上游 import）。
++        from web2robot.retarget.root_grid import (
++            estimate_reach, gravity_yaw_candidates, make_keyframe_scorer,
++            select_extremal_keyframes, solve_root_pose_grid)
++        _ee = np.stack([left_cam_ik[:, :3], right_cam_ik[:, :3]], axis=1)   # (T,2,3)
++        _kf = select_extremal_keyframes(_ee, max_keyframes=args.grid_max_keyframes)
++
++        # r_max 从运动学链现量，不查表 —— 换机器人不用改代码（M7 实测 1.007 m）
++        def _fk_norm(Q):
++            with torch.no_grad():
++                p, _ = opt.ik_left._fk(torch.tensor(Q, dtype=torch.float32)
++                                       .to(opt.ik_left.device))
++            return p.cpu().numpy()
++        _r_max = estimate_reach(_fk_norm, opt.ik_left.limits.cpu().numpy(),
++                                seed=0 if args.seed is None else args.seed)
++
++        _iks = {"left": opt.ik_left, "right": opt.ik_right}
++
++        def _converged(side, pos, quat):
++            with torch.no_grad():
++                _, _info = _iks[side].solve_batch(
++                    torch.tensor(pos, dtype=torch.float32),
++                    torch.tensor(quat, dtype=torch.float32))
++            return _info["converged"].cpu().numpy()
++
++        _sol = solve_root_pose_grid(
++            _ee,
++            make_keyframe_scorer(
++                left_cam_ik[_kf.indices], right_cam_ik[_kf.indices],
++                # workspace_center 必须是 None：给了它位置会被重新居中，候选平移
++                # 全部失效、整个搜索退化成空操作（root_grid.py docstring 有细说）
++                lambda l, r, R, t: cam_to_root_targets(l, r, R, t, None),
++                _converged),
++            r_max=_r_max, spacing=args.grid_spacing, z_radius=args.grid_z_radius,
++            max_keyframes=args.grid_max_keyframes,
++            tie_break=args.grid_tie_break,
++            R_candidates=gravity_yaw_candidates(-np.asarray(g_cam, dtype=float),
++                                                left_cam_ik, right_cam_ik,
++                                                n_yaw=args.grid_yaws),
++            chunk=max(1, args.grid_ik_batch // (2 * len(_kf.indices))))
++        print("  " + _sol.summary().replace("\n", "\n  "))
++
++        R_anchor, t_anchor = _sol.R, _sol.t
++        R_global,  t_global = R_anchor, t_anchor
++        kf_positions = _kf.indices
++        R_per_frame = np.broadcast_to(_sol.R, (seq_len, 3, 3)).copy()
++        t_per_frame = np.broadcast_to(_sol.t, (seq_len, 3)).copy()
+     else:
+-        R_per_frame, t_per_frame = interpolate_root_frames(
+-            kf_positions, Rs_blended, ts_blended, seq_len)
+-    R_per_frame, t_per_frame = smooth_root_frames(
+-        R_per_frame, t_per_frame, sigma=args.torso_smooth_sigma)
++        # ── Steps 1+3: best-of-N root anchor sampling ─────────────────────────
++        # 根估计器是 flow-matching 生成模型，同一段片段每次跑出的锚点不同；抽 N 次按
++        # IK 收敛率取最好的。n_samples=1（默认）与原始单发路径完全等价。
++        # 策略在 web2robot/retarget/root_anchor.py，这里只把两个求解器包成闭包传进去。
++        from web2robot.retarget.root_anchor import sample_best_anchor
++        _best = sample_best_anchor(
++            estimate_fn=lambda: estimate_root_poses(
++                model, left_cam_ik, right_cam_ik, g_cam_t,
++                seq_len, seq_fps, args.window_secs, _stride, device),
++            select_fn=lambda Rs, ts: select_best_anchor(
++                Rs, ts, left_cam_ik, right_cam_ik, opt, _wsc,
++                n_clusters=args.n_clusters),
++            n_samples=args.n_samples, seed=args.seed)
++        kf_positions, Rs, ts = _best.kf_positions, _best.Rs, _best.ts
++        R_anchor, t_anchor  = _best.R_anchor, _best.t_anchor
++        R_global, t_global = R_anchor, t_anchor
++
++        print(f"  anchor t={t_anchor.round(3)}  "
++              f"max_rot_dev={max(float(Rotation.from_matrix(R_anchor.T @ Rs[k]).magnitude()) for k in range(len(Rs))):.3f} rad")
++
++        # ── Step 4: blend each window estimate toward best anchor ─────────────
++        Rs_blended, ts_blended = blend_keyframes(
++            Rs, ts, args.torso_alpha, alpha_rot=args.torso_alpha_rot,
++            R_anchor=R_anchor, t_anchor=t_anchor)
++
++        # ── Step 5: interpolate to per-frame ──────────────────────────────────
++        if len(kf_positions) == seq_len:
++            R_per_frame, t_per_frame = Rs_blended, ts_blended
++        else:
++            R_per_frame, t_per_frame = interpolate_root_frames(
++                kf_positions, Rs_blended, ts_blended, seq_len)
++        R_per_frame, t_per_frame = smooth_root_frames(
++            R_per_frame, t_per_frame, sigma=args.torso_smooth_sigma)
  
-     print(f"  anchor t={t_anchor.round(3)}  "
-@@ -285,6 +311,17 @@ def run(args: argparse.Namespace) -> None:
+     # ── Step 6: convert wrist poses to per-frame root frame ───────────────────
+     left_pos, left_quat, right_pos, right_quat = cam_to_root_targets(
+@@ -285,6 +377,17 @@ def run(args: argparse.Namespace) -> None:
              q_left  = uniform_filter1d(q_left,  size=_w, axis=0, origin=-(_w//2))
              q_right = uniform_filter1d(q_right, size=_w, axis=0, origin=-(_w//2))
  
@@ -172,7 +324,7 @@ index f8f1b5f..6ce692f 100644
      # Finger retargeting
      Q_lf = Q_rf = None
      finger_jnames: list[str] = []
-@@ -312,6 +349,37 @@ def run(args: argparse.Namespace) -> None:
+@@ -312,6 +415,51 @@ def run(args: argparse.Namespace) -> None:
              elif last is not None: Q_rf[t] = last
          finger_jnames = finger_jnames or rt_r.joint_names
  
@@ -190,8 +342,22 @@ index f8f1b5f..6ce692f 100644
 +    # left untouched.
 +    if args.arm_torso_collision:
 +        from web2robot.collision.arm_torso_filter import ArmTorsoFilter
++        from web2robot.collision.presets import arm_torso_preset
++        # 代理盒的余量按**底座路线**取标定值：grid 把底座拉到手边，手臂贴身的角度和
++        # 频次都和 neural 不同（13 段实测穿躯 28.9% vs 23.8%），一套余量伺候不了
++        # 两边。neural 那组是空字典 = 保持历史行为逐位不变，见 collision/presets.py。
++        # 显式 CLI 覆盖压过预设，否则消融（含"调参前 vs 调参后"对比）没法做。
++        _route = args.root_solver if args.atf_preset == "auto" else args.atf_preset
++        _atf_kw = {} if _route == "legacy" else arm_torso_preset(_route)
++        if args.atf_torso_half is not None:
++            _atf_kw["torso_half"] = args.atf_torso_half
++        if args.atf_enter_thresh is not None:
++            _atf_kw["enter_thresh"] = args.atf_enter_thresh
++        if args.atf_margin is not None:
++            _atf_kw["margin"] = args.atf_margin
 +        _atf = ArmTorsoFilter(_robot_cfg,
-+                              include_fingers=not args.atf_no_fingers)
++                              include_fingers=not args.atf_no_fingers,
++                              **_atf_kw)
 +        q_left, q_right = _atf.process(
 +            q_left, q_right,
 +            q_left_fingers=Q_lf, q_right_fingers=Q_rf, finger_jnames=finger_jnames)
@@ -210,7 +376,7 @@ index f8f1b5f..6ce692f 100644
      # Build env for joint names + rendering
      scene_path = _robot_cfg.get("scene_path_fingers", _robot_cfg["scene_path"])
      env_vis = _robot_cfg["env_cls"](
-@@ -350,6 +418,12 @@ def run(args: argparse.Namespace) -> None:
+@@ -350,6 +498,12 @@ def run(args: argparse.Namespace) -> None:
              draw_hand_keypoints(img, all_right_j[t], K, (0, 100, 220))
          cv2.putText(img, f"{t+1}/{seq_len}  {robot_name}  a={args.torso_alpha:.2f}",
                      (8, vid_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
@@ -223,7 +389,7 @@ index f8f1b5f..6ce692f 100644
          input_frames.append(img)
  
      robot_frames = render_robot_sim(
-@@ -359,7 +433,9 @@ def run(args: argparse.Namespace) -> None:
+@@ -359,7 +513,9 @@ def run(args: argparse.Namespace) -> None:
      save_trajectory(out_dir / "trajectory.npz",
                       q_left, q_right, Q_lf, Q_rf,
                       l_jnames, r_jnames, finger_jnames,
@@ -234,16 +400,61 @@ index f8f1b5f..6ce692f 100644
      np.savez(out_dir / "root_frames.npz",
               R_per_frame=R_per_frame.astype(np.float32),
               t_per_frame=t_per_frame.astype(np.float32),
-@@ -425,7 +501,7 @@ def _parse() -> argparse.Namespace:
+@@ -368,6 +524,44 @@ def run(args: argparse.Namespace) -> None:
+     write_video(out_dir / "input_viz.mp4",  input_frames,  seq_fps)
+     write_video(out_dir / "robot_sim.mp4",  robot_frames,  seq_fps)
+ 
++    # web2robot: 物体 6D 位姿（EgoEngine §3.1 数字孪生）。默认 off。
++    # 帧数/帧率用 seq 的口径传进去，保证和手部轨迹逐帧对齐。
++    if args.object_tracking == "on":
++        from web2robot.twin import save_object_poses, track_objects
++        _obj = track_objects(clip_path, source=args.object_source,
++                             n_frames=seq_len, fps=seq_fps)
++        save_object_poses(out_dir / "object_poses.npz", _obj)
++        print(f"物体位姿：{len(_obj.tracks)} 个物体，任务物体 = obj"
++              f"{_obj.task_object_id} → object_poses.npz")
++
++    # web2robot: 动作分级精修的判决（EgoEngine §3.2.2）。默认 none，一行都不执行。
++    # run() 开头已经保证 action_refine != none ⇒ object_tracking == on，所以 _obj 在。
++    # 比的是 **IK 残差**（实际 FK 位姿 vs 交给 IK 的目标），不是"机器人手 vs 人手"——
++    # 后者本来就差一截（workspace_center 会整体平移目标），拿绝对位姿比没有意义。
++    # 策略全在 web2robot/refine/，这里只有接线。
++    if args.action_refine != "none":
++        from web2robot.refine import ErrorWeights, RefineConfig
++        from web2robot.refine.run import refine_run
++
++        def _fk7(_ik, _q):
++            """IK 解 (T,ndof) → root 系末端位姿 (T,7)，四元数 wxyz。"""
++            with torch.no_grad():
++                _p, _qt = _ik._fk(torch.as_tensor(_q, dtype=torch.float32,
++                                                  device=_ik.device))
++            return np.concatenate([_p.cpu().numpy(), _qt.cpu().numpy()], 1)
++
++        _hand_ref = np.stack([np.concatenate([left_pos,  left_quat],  1),
++                              np.concatenate([right_pos, right_quat], 1)], 1)
++        _hand_ach = np.stack([_fk7(opt.ik_left_traj,  q_left),
++                              _fk7(opt.ik_right_traj, q_right)], 1)
++        refine_run(out_dir, _obj, _hand_ref, _hand_ach,
++                   root_R=R_per_frame, root_t=t_per_frame,
++                   cfg=RefineConfig(horizon=args.refine_horizon,
++                                    per_frame_budget=args.refine_budget,
++                                    weights=ErrorWeights(args.refine_lam_p,
++                                                         args.refine_lam_R)),
++                   requested=args.action_refine)
++
+     def _roughness(q):
+         return float(np.mean(np.diff(q, axis=0) ** 2))
+     np.savez(
+@@ -425,7 +619,7 @@ def _parse() -> argparse.Namespace:
  
      # ── I/O ───────────────────────────────────────────────────────────────────
      p.add_argument("--robot",  default="g1",
 -                   choices=["g1", "franka", "robonaut2", "xlerobot"],
-+                   choices=["g1", "franka", "robonaut2", "xlerobot", "m7"],
++                   choices=["g1", "franka", "robonaut2", "xlerobot", "m7", "l3_4"],
                     help="Target robot to retarget to.")
      p.add_argument("--ckpt",   default=None, metavar="PATH",
                     help="Path to model checkpoint. "
-@@ -447,6 +523,17 @@ def _parse() -> argparse.Namespace:
+@@ -447,6 +641,17 @@ def _parse() -> argparse.Namespace:
      p.add_argument("--n_clusters",         type=int,   default=5,
                     help="Number of SE(3) K-medoids clusters used to find the "
                          "best root anchor from all window estimates.")
@@ -261,7 +472,50 @@ index f8f1b5f..6ce692f 100644
      p.add_argument("--torso_alpha",        type=float, default=0.3,
                     help="Translation blend weight between the global anchor "
                          "(0) and the per-window estimate (1). Lower values "
-@@ -471,6 +558,48 @@ def _parse() -> argparse.Namespace:
+@@ -460,6 +665,42 @@ def _parse() -> argparse.Namespace:
+                         "per-frame root trajectory after interpolation. "
+                         "Set to 0 to disable.")
+ 
++    # ── 根位姿求解器：两种粒度，可切换（我方新增） ─────────────────────────────
++    # neural = 上面那一串（逐帧生成模型 + best-of-N 锚点 + 混合 + 插值 + 平滑）
++    # grid   = Qwen-RobotManip 公式 (3)：网格搜索一个**静态**底座位姿，使覆盖轨迹
++    #          空间极值的关键帧上 IK 可行率最大。不需要 checkpoint 出根位姿。
++    # 策略全在 web2robot/retarget/root_grid.py，这里只有参数接线。
++    p.add_argument("--root_solver", choices=("neural", "grid"), default="neural",
++                   help="Root-pose solver. 'neural' = per-frame generative "
++                        "estimator (default, original behaviour). 'grid' = "
++                        "static grid search maximising keyframe IK feasibility "
++                        "(Qwen-RobotManip eq. 3); training-free.")
++    p.add_argument("--grid_spacing",   type=float, default=0.05, metavar="M",
++                   help="[--root_solver grid] Candidate grid spacing in metres.")
++    p.add_argument("--grid_yaws",      type=int,   default=12,
++                   help="[--root_solver grid] Yaw candidates around the "
++                        "gravity-fixed vertical axis (step = 360/N). 1 = use "
++                        "only the hand-separation heuristic yaw.")
++    p.add_argument("--grid_z_radius",  type=float, default=None, metavar="M",
++                   help="[--root_solver grid] Vertical search radius. "
++                        "Default = r_max/2.")
++    p.add_argument("--grid_max_keyframes", type=int, default=None, metavar="N",
++                   help="[--root_solver grid] Cap on |K|. Default = all convex "
++                        "hull vertices of the end-effector positions.")
++    p.add_argument("--grid_ik_batch",  type=int,   default=262144, metavar="N",
++                   help="[--root_solver grid] IK targets per solve_batch call. "
++                        "Small batches are kernel-launch bound (4k→7k/s vs "
++                        "262k→72k/s measured on M7).")
++    p.add_argument("--grid_tie_break", choices=("plateau", "first"), default="plateau",
++                   help="[--root_solver grid] Eq (3)'s argmax is usually a large "
++                        "SET (K covers position extremes only, never wrist "
++                        "orientation). plateau = most interior member of the tied "
++                        "set (exact argmax, generalises to frames outside K); "
++                        "first = whatever the ordering hits first (prunes ~2x "
++                        "harder, but measured 66.7%% vs 100%% full-trajectory IK "
++                        "rate on -QALmP1nHtM_678.2_682.2 -- 292 candidates tie "
++                        "there and the arbitrary one is much worse).")
++
+     # ── IK / post-processing ──────────────────────────────────────────────────
+     p.add_argument("--tol_pos",       type=float, default=0.01,
+                    metavar="M",
+@@ -471,6 +712,103 @@ def _parse() -> argparse.Namespace:
      p.add_argument("--self_collision", action="store_true",
                     help="Run gradient-based self-collision post-processing "
                          "(CollisionFilter) on the final joint trajectory.")
@@ -272,6 +526,23 @@ index f8f1b5f..6ce692f 100644
 +    p.add_argument("--atf_no_fingers", action="store_true",
 +                   help="With --arm_torso_collision, detect only arm bones "
 +                        "(B1), excluding fingertips (B2). For ablation.")
++    p.add_argument("--atf_preset", default="auto",
++                   choices=("auto", "neural", "grid", "legacy"),
++                   help="Which calibrated arm-torso margin set to use. "
++                        "'auto' (default) follows --root_solver; 'legacy' uses "
++                        "the filter's own uncalibrated defaults (the pre-"
++                        "calibration behaviour, for A/B comparison).")
++    p.add_argument("--atf_torso_half", type=float, nargs=3, default=None,
++                   metavar=("X", "Y", "Z"),
++                   help="Override the preset's torso proxy box half-extents [m].")
++    p.add_argument("--atf_enter_thresh", type=float, default=None,
++                   help="Override the preset's correction trigger depth [m]. "
++                        "A frame is corrected once it is deeper than "
++                        "(atf_enter_thresh - atf_margin).")
++    p.add_argument("--atf_margin", type=float, default=None,
++                   help="Override the preset's demanded clearance [m]: a "
++                        "corrected frame is pushed out until it clears the "
++                        "proxy box by this much.")
 +    p.add_argument("--dual_hand_collision", action="store_true",
 +                   help="Run proxy-based hand-vs-hand self-collision post-"
 +                        "processing (DualHandFilter). Conservative: only fires "
@@ -307,11 +578,49 @@ index f8f1b5f..6ce692f 100644
 +    p.add_argument("--rest_ramp_sec",  type=float, default=0.5, metavar="SEC",
 +                   help="Cosine ramp duration used to ease into and out of the "
 +                        "rest pose.")
++
++    # ── 物体 6D 位姿（数字孪生，我方新增；EgoEngine arXiv 2606.12604 §3.1） ────
++    # 默认 off —— 不传这个参数时这段代码一行都不执行，产物逐字节和以前一样。
++    # 策略全在 web2robot/twin/，这里只有参数接线。
++    p.add_argument("--object_tracking", choices=("off", "on"), default="off",
++                   help="Per-frame 6D object pose (EgoEngine eq. 'digital "
++                        "twin', arXiv 2606.12604 sec 3.1). 'on' writes "
++                        "object_poses.npz next to root_frames.npz. Default off "
++                        "= byte-identical output to before.")
++    p.add_argument("--object_source", default="official",
++                   help="[--object_tracking on] Pose backend. 'official' reads "
++                        "the digital twin shipped with the official clips "
++                        "(object_pose.bin etc). 'sam2_foundationpose' is "
++                        "EgoEngine's own route and raises NotImplementedError "
++                        "(needs an object mesh and metric depth).")
++
++    # ── 动作分级精修（我方新增；EgoEngine arXiv 2606.12604 §3.2.2） ────────────
++    # 默认 none —— 不传这个参数时这段代码一行都不执行，产物逐字节和以前一样。
++    # 第一期只出判决（切块 / 打分 / 早停 / 升不升级），mpc 和 rl 的求解器未实现，
++    # 调下去会 NotImplementedError，不会静默退回 replay。策略全在 web2robot/refine/。
++    p.add_argument("--action_refine", choices=("none", "mpc", "rl"), default="none",
++                   help="Graded action refinement (EgoEngine sec 3.2.2 adaptive "
++                        "mode switching). 'none' (default) = byte-identical "
++                        "output to before. 'mpc'/'rl' additionally require "
++                        "--object_tracking on; phase 1 writes the per-block "
++                        "verdict to action_refine.json but the solvers are not "
++                        "implemented yet, so the saved trajectory stays Replay.")
++    p.add_argument("--refine_horizon", type=int, default=20, metavar="H",
++                   help="[--action_refine] Block length in control steps "
++                        "(paper: H=20).")
++    p.add_argument("--refine_budget", type=float, default=0.05, metavar="E",
++                   help="[--action_refine] Per-frame tracking-error budget; a "
++                        "block's cumulative limit is this times its length. The "
++                        "paper gives no numeric value for this threshold.")
++    p.add_argument("--refine_lam_p", type=float, default=1.0,
++                   help="[--action_refine] lambda_p in e_t (paper gives no value).")
++    p.add_argument("--refine_lam_R", type=float, default=1.0,
++                   help="[--action_refine] lambda_R in e_t (paper gives no value).")
  
      # ── visualisation ─────────────────────────────────────────────────────────
      p.add_argument("--axis_len_wrist", type=float, default=0.15,
 diff --git a/retarget/scripts/train.py b/retarget/scripts/train.py
-index 3e30451..d6096a5 100644
+index 3e30451..749a9eb 100644
 --- a/retarget/scripts/train.py
 +++ b/retarget/scripts/train.py
 @@ -619,7 +619,7 @@ def _parse():
@@ -319,15 +628,15 @@ index 3e30451..d6096a5 100644
  
      # Robot
 -    p.add_argument("--robot", default="g1", choices=["g1", "franka", "robonaut2", "xlerobot"],
-+    p.add_argument("--robot", default="g1", choices=["g1", "franka", "robonaut2", "xlerobot", "m7"],
++    p.add_argument("--robot", default="g1", choices=["g1", "franka", "robonaut2", "xlerobot", "m7", "l3_4"],
                     help="Which robot to train on (default: g1)")
  
      # Data
 diff --git a/retarget/sim/robots/__init__.py b/retarget/sim/robots/__init__.py
-index 1d88a76..84e065b 100644
+index 1d88a76..df8e960 100644
 --- a/retarget/sim/robots/__init__.py
 +++ b/retarget/sim/robots/__init__.py
-@@ -23,11 +23,29 @@ from sim.robots.franka.sample_config    import SAMPLE_CONFIG as _FRANKA_SC
+@@ -23,11 +23,41 @@ from sim.robots.franka.sample_config    import SAMPLE_CONFIG as _FRANKA_SC
  from sim.robots.robonaut2.sample_config import SAMPLE_CONFIG as _ROBONAUT2_SC
  from sim.robots.xlerobot.sample_config  import SAMPLE_CONFIG as _XLEROBOT_SC
  
@@ -348,28 +657,42 @@ index 1d88a76..84e065b 100644
 +
 +_M7_ENV = RobotConfig(**_M7_ENV_SPEC)
 +
++# ── L3.4 / rel3_4 (RoboEra) ───────────────────────────────────────────────────
++# 第二台机器人，和 M7 完全并列（--robot m7|l3_4），同一个套路：定义在
++# web2robot/src/web2robot/robots/l3_4/，那个包**不 import 上游、也不依赖 robots/m7/**。
++# 上肢和 M7 逐位同构（量过：43 个同名关节 axis/range 全同、43 个同名 body 的
++# pos/quat 全同），但两个包各自独立 —— 见那个包 __init__.py 的说明。
++from web2robot.robots.l3_4 import (
++    CONFIG as _L34, ENV_SPEC as _L34_ENV_SPEC, SAMPLE_CONFIG as _L34_SC,
++)
++
++_L34_ENV = RobotConfig(**_L34_ENV_SPEC)
++
  ROBOT_CONFIGS = {
      "g1":        _G1,
      "franka":    _FRANKA,
      "robonaut2": _ROBONAUT2,
      "xlerobot":  _XLEROBOT,
 +    "m7":        _M7,
++    "l3_4":      _L34,
  }
  
  SAMPLE_CONFIGS = {
-@@ -35,6 +53,7 @@ SAMPLE_CONFIGS = {
+@@ -35,6 +65,8 @@ SAMPLE_CONFIGS = {
      "franka":    _FRANKA_SC,
      "robonaut2": _ROBONAUT2_SC,
      "xlerobot":  _XLEROBOT_SC,
 +    "m7":        _M7_SC,
++    "l3_4":      _L34_SC,
  }
  
  ENV_CONFIGS = {
-@@ -42,4 +61,5 @@ ENV_CONFIGS = {
+@@ -42,4 +74,6 @@ ENV_CONFIGS = {
      "franka":    _FRANKA_ENV,
      "robonaut2": _ROBONAUT2_ENV,
      "xlerobot":  _XLEROBOT_ENV,
 +    "m7":        _M7_ENV,
++    "l3_4":      _L34_ENV,
  }
 diff --git a/retarget/utils/clip_io.py b/retarget/utils/clip_io.py
 index d6e2f05..8395bbc 100644
