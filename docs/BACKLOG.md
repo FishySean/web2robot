@@ -16,34 +16,40 @@
 
 ## A. 被打断，随时能续
 
-### A1. grid 路线的碰撞过滤参数重校准（**进行中**）
+### A1. grid 路线的碰撞过滤参数重校准（**验收过了一半**，2026-08-21）
 
 - **要什么**：`--root_solver grid` 走的是网格搜索根位姿，目标函数不看身体，手臂贴身
   穿模比 neural 多（13 段实测 28.9% vs 23.8%，都是碰撞过滤**跑完之后**的残留）。
   只重新校准代理几何的膨胀/安全余量，**不改过滤器的核心逻辑**。
 - **硬约束**：`neural` 那条路线的参数**一个都不许动**，两条路线的参数要能分开配置，
   不能绑成一套。做法是 `src/web2robot/collision/presets.py` 里 `neural` 留空 →
-  今天的行为逐位不变。
-- **验收**：13 段重跑，代理判据和真实网格判据的穿透帧数差距**明显收窄**，同时穿模帧
-  占比（真实网格判据）**不比调参前差**，理想是下降。
-- **状态存在哪**：`outputs/dev/collcal/prefilter/<短名>`（不带碰撞过滤的原始 q，
-  为了离线扫参不必每换一组参数重跑 IK），日志 `outputs/dev/collcal_prefilter.log`；
-  标定结果 `outputs/dev/collcal/phase{1,2}.json`，日志 `collcal_phase{1c,2c}.log`。
+  今天的行为逐位不变。（已验：13 段的 neural 三列和旧表逐位相同 + 字节比对三个 SAME）
 - **已做完**：`scripts/dev/sweep_arm_torso_params.py`（两阶段标定）→ 结论落
   `src/web2robot/collision/presets.py`（`neural` 空、`grid` = 盒 `[0.0695,0.119,0.239]`
   + `enter_thresh 0.02` + `margin 0.02`）→ `test.py` 接上 `--atf_preset/--atf_*` 覆盖 →
-  `tests/test_module_boundaries.py::TestArmTorsoPresets`。3 段 542 帧上：代理/网格
-  帧数差 226 → 24，穿模 9.8% → 4.4%，最深 6.07 → 4.49 cm，手腕挪动 +0.13 cm。
-- **下一步（就剩验收，2026-08-20 20:30 被 L3.4 接入任务打断）**：代码/patch/单测都已完成，
-  等后台跑完 —— ① `outputs/dev/collcal_ab.log`（`scripts/dev/run_collcal_ab.sh`，13 段
-  grid 重跑，约 20 分钟/段，预计 00:20 前后完；20:03 时已完成 2/13）完了出表：
-  `m7_tool.sh collcmp_table.py --root outputs/retarget/collcmp_cal
-  --out outputs/dev/collcal_ab_table`，和旧表 `outputs/dev/collcmp_table/results.json`
-  对比（验收：帧数差明显收窄 + 穿模帧占比不比调参前差）；
-  ② `outputs/dev/neural_bytecheck.log` 已验完，三个文件 `SAME`。
-  剩下：README 的 13 段表更新 → 顺手定 B2（默认 `--root_solver`）→ 删掉本条。
-  （`VERIFICATION.md` ⑤已写、单测全绿；patch 已重导，现在是 520 insertions ——
-  里面已经含了 A2 那台新机器人的 61 行）
+  `tests/test_module_boundaries.py::TestArmTorsoPresets` → 13 段 A/B 跑完出表
+  （`outputs/dev/collcal_ab_table/`，逐段数字和抽帧都在 `docs/VERIFICATION.md`）。
+- **验收结论（两条判据，一过一不过）**：
+  - ✅ 穿模帧占比（真实网格判据）：13 段 **28.9% → 13.3%**，留出的 10 段 37.4% → 17.3%，
+    12/13 段有残留 → 9/13，**没有一段变差**，ik 可行率一位没变。这条是**要什么**里
+    真正在意的那条，泛化了。
+  - ❌ 代理判据 vs 网格判据的帧数差：只在标定用的 3 段上收窄（226 → 24），留出的 10 段
+    180 → **198**，而且方向翻面（误报 423 → 0，漏报 17 → **222**）。
+- **为什么不过，以及下一步该动哪**（这是本条还留着的唯一原因）：不是参数没调好，是
+  **代理形状到顶了** —— 躯干真身是圆的，轴对齐盒要把角上的误报压到 0 就得把 x 半长压到
+  真身的 0.50 倍，于是平面方向欠覆盖，~1.7 cm 以内的真穿透对代理隐形。
+  **下一步：把"检测"和"推出目标"解耦** —— 判是否触发用接近真身尺寸的盒
+  （`presets.MESH_HALF`），推出目标仍用标定盒。落点是
+  `src/web2robot/collision/arm_torso_filter.py`（`_sdf` 现在一个盒兼两职，
+  给 `M7CapsuleModel` 加第二个 `torso_half` 或给过滤器加 `detect_half`），
+  改完拿 `sweep_arm_torso_params.py phase2` 在同一批 prefilter 素材上重扫一遍，
+  再跑一遍 `run_collcal_ab.sh` 看留出 10 段的漏报有没有下来。
+  素材还在：`outputs/dev/collcal/prefilter/<短名>`（不带过滤的原始 q，换参数不必重跑 IK）。
+- **另一件已经查清、别再当成同一个病的事**：残留里**深**的那些不是漏检 ——
+  `--oo8_XIuOM_900.3_917.4` 最坏几帧代理读数 −1.92 ~ −4.70 cm，代理报了，是过滤器
+  没修得动（那段 ik 只有 84.8%，源头坏帧）。抽帧确认它**肉眼可见地坏**（左小臂埋进躯干、
+  指尖从胸口另一侧戳出来）；而 1.6 cm 那档看不出来。要治它得从坏帧兜底/源头感知那边走。
+
 
 ### A2. L3.4（rel3_4）接入（**第一阶段已完成**，2026-08-20；只剩第二阶段的欠账）
 
@@ -89,8 +95,19 @@
 
 ### B2. 默认 `--root_solver` 选哪条
 
-13 段实测两条各有胜负（grid 可行率 +9.6 分，但穿模更多、ρ̄ 更偏离 0.65）。README 现在
-如实写着"还没定默认"。A1 校准完之后这件事就该定了。
+13 段的数字（碰撞过滤参数按路线分开标定**之后**，2026-08-21）：
+
+| | IK 可行率（段均） | 残留穿躯帧占比 | 有残留的段数 | ρ̄（参照 0.65） |
+|---|---|---|---|---|
+| `neural` | 87.1% | 23.8% | 11/13 | 0.441 |
+| `grid` | **96.7%** | **13.3%** | **9/13** | 0.393 |
+
+标定之前 grid 是"可行率赢、穿模输"，现在两项都赢，只剩 ρ̄ 更偏离 Ego2Robot 的 0.65
+（即底座更贴近手、手臂折得更多）。我的建议是**默认 grid**，理由是 ρ̄ 偏低是"姿态不够
+拟人"，而穿模是"数据直接不能用"，后者更硬；而且 grid 不用 ckpt，陌生人 clone 下来
+就能跑。**但这条得人拍板**，因为 ρ̄ 是论文里要讨论的量，默认值会影响所有后续素材。
+定了之后：改 `external/EgoInfinity/retarget/test.py` 的 `--root_solver` default
+（走 patch）+ README ④那节 + 重导 patch。
 
 ## C. 有意推后的欠账
 

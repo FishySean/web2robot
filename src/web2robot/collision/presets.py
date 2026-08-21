@@ -40,6 +40,28 @@ contacts on three pre-filter runs (542 frames: fill_jar, sip_coffee,
 Presets deliberately hold only the *calibrated* quantities (box + the two
 thresholds).  Optimiser weights, iteration counts and smoothing are route-
 independent and stay at the class defaults.
+
+How well GRID held up out of sample (2026-08-21)
+------------------------------------------------
+Re-ran all 13 clips.  What matters — residual real-mesh penetration after
+filtering — improved and generalised: 28.9% → 13.3% of frames over 13 clips
+(37.4% → 17.3% on the 10 clips *not* used for calibration), 12/13 → 9/13 clips
+with any residual, IK feasibility unchanged.
+
+The `漏 0 / 误 0` above, however, is **in-sample only**.  Out of sample the
+proxy-vs-mesh disagreement did not shrink (180 → 198 frames) and flipped
+direction: 423 false alarms became 0, but 17 misses became 222.  Cause is the
+proxy's *shape*, not these numbers: the real trunk is round, and forcing an
+axis-aligned box to zero false alarms at the corners costs coverage on the
+faces (x half-extent down to 0.50x the mesh), so real penetration shallower
+than ~1.7 cm is invisible to it.  Measured: on `-0RheyDV3a0_48.6_55.3`'s 90
+residual frames the proxy reads +0.08..+0.48 cm ("not touching yet") while the
+mesh reads 1.26 cm deep.  Those frames are visually clean (forearms resting on
+the chest plate), so this is a detection blind spot rather than a picture
+problem — but it means the box cannot be pushed further in this direction.  The
+fix is to decouple detection from the push-out target (detect with a
+mesh-sized box, push out to the calibrated one), not to re-tune the triple.
+See `docs/VERIFICATION.md` and BACKLOG A1.
 """
 
 from __future__ import annotations
