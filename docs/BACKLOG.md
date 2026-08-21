@@ -115,6 +115,8 @@
 | C11 | 视觉合成（新视角/渲染）那一摊 | 已归档，明确不占精力 |
 | C12 | 前端控制台 | 见 [TODO22_FRONTEND_CONSOLE.md](TODO22_FRONTEND_CONSOLE.md) |
 | C13 | github.io 页面 + demo 素材 | 目标已经改成 "repo + demo"，页面还没开工；`docs/assets/` 里的两张图是第一笔 |
+| C14 | 质检/路由接 [`VIDEO_SELECTION_GUIDE.md`](VIDEO_SELECTION_GUIDE.md) 的 §V1–§V4 | 判据文档 2026-08-21 已重写并搬进本仓库，**代码还是旧认知**。接的时候三件具体事：① `quality/` 现在没有"画面变化是否连续"这个准入判据（`camera_motion` 是路由标签，不是准入，别拿它顶替 §V1）；② `pipeline.py` 的 `trim` 只裁到 `usable_span` 最长一段，§V4 要的是**按切点拆成多段全部保留**、每段各自判；③ 每个判据函数的注释要写 `依据 VIDEO_SELECTION_GUIDE.md §Vx`（编号是接口）—— 这是这次文档任务定的验收标准，本次**只改了文档、没动代码**。卡在①②暂停自研等对接 wangjufei |
+| C15 | §V5"机器人抽搐 ⇔ 切镜"的定量复现 | 现在是**有机理支撑的观察，本仓库没有数字** —— 我们端到端跑的官方片段本身不含切镜。做法：找一段有切镜的原始视频跑完整条链，看 `root_frames.npz` 的位姿和 `trajectory.npz` 的关节角在切镜帧上的**一阶差分尖峰**位置和 ffmpeg 报的切点对不对得上。做完把数字写进 §V5，把"未定量复现"那句删掉 |
 
 ## D. 不是技术活，但会忘
 

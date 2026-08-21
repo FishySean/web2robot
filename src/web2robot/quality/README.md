@@ -181,8 +181,13 @@ COCO-17:  0鼻 1左眼 2右眼 3左耳 4右耳 | 5左肩 6右肩 | 7左肘 8右�
 }
 ```
 
-`suggested_route` 是**建议不是决定** —— 规则抄自 `hand2robot/VIDEO_SELECTION_GUIDE.md` §0.1
+`suggested_route` 是**建议不是决定** —— 规则抄自
+[`docs/VIDEO_SELECTION_GUIDE.md`](../../../docs/VIDEO_SELECTION_GUIDE.md) §0.1
 (HaWoR 需要视差 + 纹理 + 时长**三者齐备**,缺一即退回 WiLoR+MoGe),最终判定权在第 2 步。
+那份文档 2026-08-21 从 `hand2robot/` 搬进本仓库,并把准入判据改写成了 §V1–§V4
+(连续性 / 人体位置 / 人体朝向 / 切镜拆段)。**本模块还没接那四条** —— 现在的 `camera_motion`
+只是路由标签,不是准入判据;`trim` 只裁到最长一段,不是 §V4 要的"拆成多段全保留"。
+差在哪见 `docs/BACKLOG.md`。
 
 `usable_span` 是**两个约束的交集**:`cuts.longest_span`(剪辑连续的区间)∩ 连续可用段(手在
 画面里的区间,第三人称取 `body_span_est`、只有手取手检的 `hands_span_est` —— 用哪个仪器判的
