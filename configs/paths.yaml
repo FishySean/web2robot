@@ -55,6 +55,16 @@ assets:
   m7_urdf:   assets/robots/m7/m7_from_urdf.urdf
   m7_scene:  assets/robots/m7/scene_vis.xml
   m7_meshes: assets/robots/m7/meshes
+  # L3.4（rel3_4）—— 第二台机器人。整个目录由 scripts/dev/build_l3_4_assets.py
+  # 从 assets/robots/urdf.tar.gz 生成（**别手改**，改了就重跑那个脚本）。
+  # 上肢和 M7 逐位同构，腿/腰/颈锁死，见 src/web2robot/robots/l3_4/。
+  l3_4_mjcf:   assets/robots/l3_4/l3_4.xml
+  l3_4_mjx:    assets/robots/l3_4/l3_4_mjx.xml
+  l3_4_urdf:   assets/robots/l3_4/l3_4_from_urdf.urdf
+  l3_4_scene:  assets/robots/l3_4/scene_vis.xml
+  l3_4_meshes: assets/robots/l3_4/meshes
+  # 厂家原包（l3.4.xml / l3_4.urdf / m7.urdf 各一份），是上面那个目录的唯一来源
+  l3_4_src_tar: assets/robots/urdf.tar.gz
 
 data:
   videos:  data/videos     # symlink -> hand_projects/hand2robot/videos
