@@ -21,6 +21,14 @@
 开头/结尾的不对称是 2026-08-11 定的设计决策，不是疏漏。**空洞填出来的帧都不是
 可用数据**，所以状态必须带出去而不是悄悄补平。这套机制修掉了 ``fill_jar`` 里
 左手崩坏 11 秒那一段。
+
+## 上面那一整套是**逐帧**这一层
+
+2026-08-21 按 EgoSmith（EgoSteer，arXiv 2607.09701）补了另外两个粒度 ——
+**整段**（相机运动分布离群）和**轨迹段**（一小段的手腕/手指坐标空间离群），在
+``tiers.py``。三层是**独立并列**的判据，新增的两层不覆盖、不替换上面这套
+"跳变/鼓包/四元数翻转"，而且**都不改数据**（整段只警告、轨迹段只打标记）。
+``--bad_frame_tiers`` 默认只有 ``frame``，即现状不变。
 """
 from .traj_cleanup import (
     clean_wrist_trajectory, detect_bad_frames, canonicalize_quats,
@@ -28,8 +36,16 @@ from .traj_cleanup import (
     OK, FILL_INTERP, FILL_HOLD, FILL_REST, STATUS_NAMES,
     C_OK, C_MISSING, C_BAD, CAUSE_NAMES,
 )
+from .tiers import (
+    TIER_NAMES, DEFAULT_TIERS, parse_tiers,
+    EpisodeReport, episode_camera_check,
+    SegmentFinding, segment_spatial_check,
+)
 
 __all__ = ["clean_wrist_trajectory", "detect_bad_frames", "canonicalize_quats",
            "blend_to_rest", "relax_fingers",
            "OK", "FILL_INTERP", "FILL_HOLD", "FILL_REST", "STATUS_NAMES",
-           "C_OK", "C_MISSING", "C_BAD", "CAUSE_NAMES"]
+           "C_OK", "C_MISSING", "C_BAD", "CAUSE_NAMES",
+           "TIER_NAMES", "DEFAULT_TIERS", "parse_tiers",
+           "EpisodeReport", "episode_camera_check",
+           "SegmentFinding", "segment_spatial_check"]

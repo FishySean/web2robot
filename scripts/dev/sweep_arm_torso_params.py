@@ -46,12 +46,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from collcmp_table import scan, summarize                    # noqa: E402
 from web2robot.collision import ArmTorsoFilter, M7CapsuleModel   # noqa: E402
+from web2robot.collision.presets import MESH_HALF as _MESH_HALF   # noqa: E402
 from web2robot.paths import P                                # noqa: E402
 from web2robot.robots.m7.env import M7Env                    # noqa: E402
 
 #: 躯干网格的真实 AABB 半长（waist_pitch_link 上，m7.xml 里量的）。
 #: 现行代理是它的 [0.755, 0.794, 0.900] 倍 —— "保守缩小"是当初手挑的，没校准过。
-MESH_HALF = np.array([0.139, 0.170, 0.239])
+#: 2026-08-21 起从 configs/robots/m7.yaml 读（原来这里有一份手抄的副本 —— 标定脚本
+#: 的分母和被标定的代码用的不是同一个数，这种重复正好会让扫出来的比例悄悄错位）。
+MESH_HALF = np.array(_MESH_HALF)
 DEFAULT_HALF = M7CapsuleModel.TORSO_HALF.copy()
 DEFAULT_TIP_R = M7CapsuleModel.TIP_RADIUS
 SIDES = ("left", "right")

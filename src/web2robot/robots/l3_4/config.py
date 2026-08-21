@@ -3,14 +3,17 @@ import numpy as np
 from web2robot.robots.l3_4.env import (
     L34Env, _SCENE_PATH, _MJCF_MJX_PATH, _ARM_JOINTS, _EE_BODY, _LOCKED_JOINTS,
 )
+from web2robot.robots.params import robot_params as _robot_params
 
 # IK seed poses (arm order: shoulder_pitch, shoulder_roll, arm_yaw,
 # elbow_pitch, elbow_yaw, wrist_pitch, wrist_roll).
 # elbow_pitch bends negative (range -2.36..0.7); shoulder_roll abducts +left/-right.
 # 数值和 M7 相同，因为这条手臂的运动学和限位与 M7 逐位相同（见 env.py 的说明）——
-# 是量出来的巧合，不是共用了代码。
-_START_L = np.array([0.0,  0.20, 0.0, -1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-_START_R = np.array([0.0, -0.20, 0.0, -1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+# 是量出来的巧合，不是共用了代码。所以 configs/robots/l3_4.yaml 里也是**各存一份**、
+# 没用 yaml 锚点指向 m7.yaml（理由同 ik_config.py 的说明）。
+_START = _robot_params("l3_4")["ik"]["start_config"]
+_START_L = np.array(_START["left"],  dtype=np.float32)
+_START_R = np.array(_START["right"], dtype=np.float32)
 
 CONFIG = {
     # ── environment ───────────────────────────────────────────────────────────

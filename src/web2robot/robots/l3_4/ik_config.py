@@ -30,9 +30,16 @@ arm_yaw、elbow_pitch、elbow_yaw、wrist_pitch、wrist_roll。``JOINT_LIMITS`` 
 ## 这些数字和 M7 的一样，但不共用
 
 L3.4 的上肢和 M7 逐位同构（``scripts/dev/build_l3_4_assets.py`` 的 docstring 里列了
-量到的证据），所以下面这张表和 ``robots/m7/ik_config.py`` 的数值相同。**没有 import
+量到的证据），所以这张表和 ``robots/m7/ik_config.py`` 的数值相同。**没有 import
 过去**是刻意的（见 ``env.py``）；防漂的办法是拿 MJCF 当唯一真相：
-``tests/test_l3_4_robot.py`` 断言这里每一行都等于 ``l3_4.xml`` 里那个关节的 ``range``。
+``tests/test_l3_4_robot.py`` 断言每一行都等于 ``l3_4.xml`` 里那个关节的 ``range``。
+
+## 数字本身在 ``configs/robots/l3_4.yaml``
+
+2026-08-21 搬过去的（``ik.joint_limits``）。**这里不留第二份。** 搬家没有让两台机器人
+开始共用一张表 —— 是 ``m7.yaml`` 和 ``l3_4.yaml`` 各存一份、没用 yaml 锚点，理由和这两个
+``ik_config.py`` 当初不互相 import 完全一样：真相是各自的 MJCF，哪天 L3.4 换一版 URDF
+改了某个区间，各自一份能自然分叉，共享一份则会把 M7 的数悄悄按到 L3.4 头上还不报错。
 
 ## 链根/末端的名字不在这里写死
 
@@ -41,6 +48,9 @@ MuJoCo env 都从那儿取）。同一个 body 名存两份，改 MJCF 时必然
 报错 —— 所以这里直接引用，不复制。
 """
 from web2robot.robots.l3_4.config import CONFIG as _CONFIG
+from web2robot.robots.params import robot_params as _robot_params
+
+_P = _robot_params("l3_4")
 
 #: 串链根 body 名（两条手臂共用），来自 ``config.CONFIG["torso_body"]``。
 ROOT_LINK_NAME = _CONFIG["torso_body"]
@@ -50,26 +60,14 @@ ROOT_LINK_NAME = _CONFIG["torso_body"]
 END_LINK_NAME = dict(_CONFIG["wrist_body"])
 
 #: (7, 2) 的关节限位，单位 rad，顺序见模块 docstring。纯 list，不是 tensor。
+#: 数值来自 ``configs/robots/l3_4.yaml`` 的 ``ik.joint_limits``（唯一来源）。
 JOINT_LIMITS = {
-    "left": [
-        [-2.79,  2.79],   # shoulder_pitch
-        [-0.56,  2.53],   # shoulder_roll   ← 左右镜像
-        [-4.36,  1.22],   # arm_yaw         ← 左右镜像
-        [-2.36,  0.70],   # elbow_pitch
-        [-2.79,  2.79],   # elbow_yaw
-        [-0.79,  0.79],   # wrist_pitch
-        [-1.57,  1.57],   # wrist_roll
-    ],
-    "right": [
-        [-2.79,  2.79],   # shoulder_pitch
-        [-2.53,  0.56],   # shoulder_roll   ← 左右镜像
-        [-1.22,  4.36],   # arm_yaw         ← 左右镜像
-        [-2.36,  0.70],   # elbow_pitch
-        [-2.79,  2.79],   # elbow_yaw
-        [-0.79,  0.79],   # wrist_pitch
-        [-1.57,  1.57],   # wrist_roll
-    ],
+    side: [[float(lo), float(hi)] for lo, hi in _P["ik"]["joint_limits"][side]]
+    for side in ("left", "right")
 }
+
+#: yaml 里记的关节顺序，和模块 docstring 那一串一致。
+JOINT_ORDER = tuple(_P["ik"]["joint_limits"]["order"])
 
 
 def ik_spec(side: str) -> dict:
@@ -88,4 +86,5 @@ def ik_spec(side: str) -> dict:
     }
 
 
-__all__ = ["ROOT_LINK_NAME", "END_LINK_NAME", "JOINT_LIMITS", "ik_spec"]
+__all__ = ["ROOT_LINK_NAME", "END_LINK_NAME", "JOINT_LIMITS", "JOINT_ORDER",
+           "ik_spec"]

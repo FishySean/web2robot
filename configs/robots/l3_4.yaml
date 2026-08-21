@@ -1,0 +1,57 @@
+# L3.4 的可调参数。格式和字段含义见 m7.yaml 的头注释（同一套格式，HandUMI 风格）。
+#
+# ## 为什么和 M7 的数值一样，却还是两份文件
+#
+# L3.4 的上肢和 M7 逐位同构（证据见 scripts/dev/build_l3_4_assets.py 的 docstring），
+# 所以下面这张限位表和 m7.yaml 的数值相同。**不用 yaml 锚点/引用去共享它**，理由和
+# 当初两个 ik_config.py 不互相 import 一样：真相是各自的 MJCF，不是"另一台机器人"。
+# 哪天 L3.4 换了一版 URDF 把某个区间改了，各自一份能自然分叉；共享一份则会悄悄
+# 把 M7 的数按到 L3.4 头上，而且不会报错。防漂靠测试（tests/test_l3_4_robot.py 断言
+# 这张表等于 l3_4.xml 里的 range），不靠去重。
+
+robot: l3_4
+description: 上肢与 M7 逐位同构的整机（含腿），第二阶段资产未补齐（见 BACKLOG）
+
+ik:
+  # web2robot/robots/l3_4/ik_config.py::JOINT_LIMITS
+  joint_limits:
+    verified: false
+    source: >-
+      从 assets/l3_4/l3_4.xml 每个关节的 range 抄出来的，不是标定值。
+    pinned_by: tests/test_l3_4_robot.py（逐行断言这张表等于 l3_4.xml 里那个关节的 range）
+    unit: rad
+    order: [shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch, elbow_yaw, wrist_pitch, wrist_roll]
+    left:
+      - [-2.79, 2.79]     # shoulder_pitch
+      - [-0.56, 2.53]     # shoulder_roll   ← 左右镜像
+      - [-4.36, 1.22]     # arm_yaw         ← 左右镜像
+      - [-2.36, 0.70]     # elbow_pitch
+      - [-2.79, 2.79]     # elbow_yaw
+      - [-0.79, 0.79]     # wrist_pitch
+      - [-1.57, 1.57]     # wrist_roll
+    right:
+      - [-2.79, 2.79]     # shoulder_pitch
+      - [-2.53, 0.56]     # shoulder_roll   ← 左右镜像
+      - [-1.22, 4.36]     # arm_yaw         ← 左右镜像
+      - [-2.36, 0.70]     # elbow_pitch
+      - [-2.79, 2.79]     # elbow_yaw
+      - [-0.79, 0.79]     # wrist_pitch
+      - [-1.57, 1.57]     # wrist_roll
+
+  # web2robot/robots/l3_4/config.py::CONFIG["start_config"] / ["home_config"]
+  start_config:
+    verified: false
+    source: >-
+      沿用 M7 的手挑姿态（上肢同构，同一组数看起来一样自然）。没做过对比实验。
+    unit: rad
+    order: [shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch, elbow_yaw, wrist_pitch, wrist_roll]
+    left:  [0.0,  0.20, 0.0, -1.0, 0.0, 0.0, 0.0]
+    right: [0.0, -0.20, 0.0, -1.0, 0.0, 0.0, 0.0]
+
+# ## 没有 collision: 这一节，是刻意的
+#
+# 碰撞过滤（ArmTorsoFilter/DualHandFilter/M7CapsuleModel）目前是 M7 专用的：躯干代理盒
+# 挂在 waist_pitch_link 上、body 名字写死成 left/right_hand_frame，那套参数一次也没有
+# 在 L3.4 上标定过、也没在 L3.4 上跑过。写一节 verified: false 的复制品进来，只会让
+# 看配置的人以为"L3.4 也支持碰撞过滤，参数就在这儿"。等真要支持了再加，连标定一起加。
+# 待办见 docs/BACKLOG.md。

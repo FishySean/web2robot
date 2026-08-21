@@ -14,17 +14,19 @@ numpy / mujoco / scipy，**零上游 import**；`test.py` 那 +190 行的 diff �
 
 ## egoinfinity-modified.patch
 
-2026-08-21 把 `--root_solver` 的默认值改成 `grid` 之后重新导出，覆盖 6 个
-被改过的**已跟踪**文件（6 files changed, 530 insertions(+), 32 deletions(-)，46139 字节）。
+2026-08-21 加了 `--bad_frame_tiers`（坏帧过滤的另外两个粒度）之后重新导出，覆盖 6 个
+被改过的**已跟踪**文件（6 files changed, 583 insertions(+), 32 deletions(-)，49926 字节）。
 
-**这一版数字是往上走的，原因见下面 2026-08-18 起的六节** ——
-上一版 520
+**这一版数字是往上走的，原因见下面 2026-08-18 起的七节** ——
+上一版 530
 insertions。一般来说 patch 变大就是有人在往上游文件里写实质逻辑，所以每次变大都必须在
-这里写清楚多出来的是什么；这六次多的分别是一个 if/else 开关＋把新求解器包成 callable 的
+这里写清楚多出来的是什么；这七次多的分别是一个 if/else 开关＋把新求解器包成 callable 的
 接线、两个默认关闭的开关、一处"去 `presets.py` 查表 + 允许 CLI 覆盖"的接线、一台新机器人
-在注册表/IK/手部重定向器三处的注册、和一次默认值翻转（10 行全是注释，零新代码），肉仍然在
+在注册表/IK/手部重定向器三处的注册、一次默认值翻转（10 行全是注释，零新代码）、和一个
+选粒度的开关＋一处调用点，肉仍然在
 `src/web2robot/retarget/root_grid.py`、`src/web2robot/twin/`、`src/web2robot/refine/`、
-`src/web2robot/collision/presets.py` 和 `src/web2robot/robots/l3_4/`。
+`src/web2robot/collision/presets.py`、`src/web2robot/robots/l3_4/` 和
+`src/web2robot/trajectory/tiers.py`。
 
 ```bash
 cd external/EgoInfinity && git apply ../patches/egoinfinity-modified.patch
@@ -322,3 +324,37 @@ grid 唯一输的是 ρ̄ 更偏离 Ego2Robot 的 0.65。
 
 校验照旧：`git archive HEAD` 铺进临时目录 → replay 这个 patch → 和真实工作区逐字节
 md5 比对，**6/6 完全一致**（2026-08-21，46139 字节）。
+
+### 2026-08-21 `--bad_frame_tiers`：530 → 583，多出来的 53 行是一个开关＋一处调用点
+
+坏帧过滤的另外两个粒度（EgoSmith / EgoSteer arXiv 2607.09701 §3 的 episode 和 segment）
+在 `src/web2robot/trajectory/tiers.py` + `src/web2robot/retarget/fallback.py`，
+**零上游 import**、纯 numpy 单测（`tests/test_badframe_tiers.py`，26 例）。
+上游 `test.py` 里多出来的是：
+
+| 多出来的 | 行数 | 是什么 |
+|---|---|---|
+| `--bad_frame_tiers` argparse 选项 | ~20 | 参数接线，**默认 `frame`**（= 现状），帮助文本写清"新增两层只警告/只标记，不改数" |
+| 粒度集合的**单一来源** | ~8 | `_tiers = set(_parse_tiers(...))`，老开关 `--no_bad_frame_detect` 在这里被翻译成 `_tiers.discard("frame")`，下面 `detect_bad="frame" in _tiers` —— 两个开关不许各判一次 |
+| `if _tiers & {"episode","segment"}:` 调用点 | ~20 | 调 `run_extra_tiers()`，喂**未清洗**的原始手部轨迹（`_raw_l/_raw_r`）+ `seq_fps` |
+| 条件写报告 | ~5 | 只有开了新粒度才写 `bad_frame_tiers.json` |
+
+**老开关和新开关必须只有一个来源**，这是这次唯一值得盯的设计：`--no_bad_frame_detect`
+（老的、关掉逐帧检测）和 `--bad_frame_tiers`（新的、选粒度）说的是同一件事的两个面，
+如果各留一份状态，`--no_bad_frame_detect --bad_frame_tiers frame` 这种组合就会自相矛盾。
+所以先把两者归到同一个集合 `_tiers`，之后所有判断都读它。
+
+**默认行为逐字节不变，而且是真跑出来的** ——
+[`check_tiers_yaml_bytes.sh`](../../scripts/dev/check_tiers_yaml_bytes.sh) 同一段片段
+（`-1r9yl-P-Ao_86.3_90.8`，M7 / **显式** `--root_solver neural` / seed 0 / 两条碰撞过滤都开）
+跑 `base` 和 `--bad_frame_tiers episode,segment,frame` 两遍，和本次改动**之前**留下的
+`outputs/dev/neural_bytecheck/base/` 比 md5。为什么这条非跑不可：这次动的是 **argparse
+本身**，而 argparse 的顺序都可能挪动随机数流（这份文档里栽过一次，见
+`docs/VERIFICATION.md` 文末方法论第 4 步）。
+
+同一次改动还把机器人参数搬进了 `configs/robots/*.yaml`（HandUMI 那套格式 + `verified`
+标志位），**上游文件一个字都没动** —— 上游本来就不知道这些数字，它只知道去
+`web2robot.robots.<name>` 取，和 L3.4 那节同一个套路。
+
+校验照旧：`git show HEAD:<file>` 铺进临时目录 → replay 这个 patch → 和真实工作区逐字节
+md5 比对，**6/6 完全一致**（2026-08-21，49926 字节）。

@@ -123,7 +123,7 @@ index 2d8dc8c..c18a481 100644
      def xlerobot(side: str) -> "RobotIKConfig":
          """XLeRobot 5-DoF SO-ARM100 arm (Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll)."""
 diff --git a/retarget/scripts/test.py b/retarget/scripts/test.py
-index f8f1b5f..29d0674 100644
+index f8f1b5f..202ad05 100644
 --- a/retarget/scripts/test.py
 +++ b/retarget/scripts/test.py
 @@ -126,10 +126,26 @@ def _preview_trajectory(env_vis, q_left, q_right, Q_lf, Q_rf, finger_jnames,
@@ -153,27 +153,61 @@ index f8f1b5f..29d0674 100644
      out_dir.mkdir(parents=True, exist_ok=True)
  
      print(f"Clip : {clip_path}")
-@@ -151,6 +167,19 @@ def run(args: argparse.Namespace) -> None:
+@@ -151,6 +167,30 @@ def run(args: argparse.Namespace) -> None:
      if left_cam_np is None or right_cam_np is None:
          raise RuntimeError("Clip is missing both-hand tracking data.")
  
 +    # ── bad/missing frame fallback (input side) ───────────────────────────────
 +    # 为什么不能用 get_window() 的填补、每一步在做什么，见
 +    # web2robot/retarget/fallback.py 的 docstring。这里只接线。
++    #
++    # 三个粒度（EgoSmith / EgoSteer arXiv 2607.09701）：episode / segment / frame。
++    # --bad_frame_tiers 是**唯一**决定哪层跑的地方；`frame` 那层就是下面这段
++    # （detect_bad），另两层"只看不动"，在 _extra_tiers 里。
++    # --no_bad_frame_detect 是老的消融开关，在这里就地折算成"去掉 frame 这层"，
++    # 免得同一件事有两个来源（下游只读 _tiers）。
++    from web2robot.trajectory.tiers import parse_tiers as _parse_tiers
++    _tiers = set(_parse_tiers(args.bad_frame_tiers))
++    if args.no_bad_frame_detect:
++        _tiers.discard("frame")
++
 +    st_l = st_r = ca_l = ca_r = None
 +    if args.bad_frame_fallback:
 +        from web2robot.retarget.fallback import clean_input_wrists
 +        _cl = clean_input_wrists(
 +            *seq.raw_wrist_trajectories(), seq_fps,
 +            max_interp_sec=args.max_interp_sec, max_hold_sec=args.max_hold_sec,
-+            detect_bad=not args.no_bad_frame_detect)
++            detect_bad="frame" in _tiers)
 +        left_cam_np,  st_l, ca_l = _cl.left,  _cl.status_left,  _cl.cause_left
 +        right_cam_np, st_r, ca_r = _cl.right, _cl.status_right, _cl.cause_right
 +
      vid_frames = load_video_frames(clip_path / "depth.mp4")
      vid_h, vid_w = (vid_frames[0].shape[:2] if vid_frames else (480, 640))
      K = {"fx": seq.focal, "fy": seq.focal,
-@@ -189,14 +218,10 @@ def run(args: argparse.Namespace) -> None:
+@@ -176,6 +216,22 @@ def run(args: argparse.Namespace) -> None:
+             else:
+                 all_right_j[t] = jc
+ 
++    # web2robot: EgoSmith 的整段 / 轨迹段两个粒度（EgoSteer arXiv 2607.09701）。
++    # 两层**都不改任何数据** —— 整段级只打警告（这段视频照样跑完整条流水线），
++    # 轨迹段级只写帧区间标记（留给 refine 决定要不要升级精修）。判据和"为什么不
++    # 照抄原文的 discard"见 web2robot/trajectory/tiers.py 的 docstring；引用的准入
++    # 判据是 docs/VIDEO_SELECTION_GUIDE.md §V2/§V3。
++    # 默认 --bad_frame_tiers frame → 下面一行都不执行、不多写文件，产物逐字节不变。
++    _tier_report = {}
++    if _tiers & {"episode", "segment"}:
++        from web2robot.retarget.fallback import run_extra_tiers
++        print("Bad-frame tiers (episode/segment，只看不动):")
++        _raw_l, _raw_r = seq.raw_wrist_trajectories()
++        _tier_report = run_extra_tiers(
++            sorted(_tiers), _raw_l, _raw_r, seq_fps,
++            frames=vid_frames, joints_left=all_left_j, joints_right=all_right_j,
++            seg_sec=args.window_secs)
++
+     g_cam_t    = torch.tensor(g_cam, dtype=torch.float32).unsqueeze(0).to(device)
+     _robot_cfg = _ROBOT_CONFIGS[robot_name]
+ 
+@@ -189,14 +245,10 @@ def run(args: argparse.Namespace) -> None:
          left_cam_ik  = left_cam_np
          right_cam_ik = right_cam_np
  
@@ -189,7 +223,7 @@ index f8f1b5f..29d0674 100644
      _wsc           = _robot_cfg.get("workspace_center")
      _ik_robot_name = _robot_cfg["ik_robot"]
      _null_man      = 0.5 if robot_name == "franka" else 0.1
-@@ -213,28 +238,95 @@ def run(args: argparse.Namespace) -> None:
+@@ -213,28 +265,95 @@ def run(args: argparse.Namespace) -> None:
          null_weight_smo=_null_smo,
      )
  
@@ -306,7 +340,7 @@ index f8f1b5f..29d0674 100644
  
      # ── Step 6: convert wrist poses to per-frame root frame ───────────────────
      left_pos, left_quat, right_pos, right_quat = cam_to_root_targets(
-@@ -285,6 +377,17 @@ def run(args: argparse.Namespace) -> None:
+@@ -285,6 +404,17 @@ def run(args: argparse.Namespace) -> None:
              q_left  = uniform_filter1d(q_left,  size=_w, axis=0, origin=-(_w//2))
              q_right = uniform_filter1d(q_right, size=_w, axis=0, origin=-(_w//2))
  
@@ -324,7 +358,7 @@ index f8f1b5f..29d0674 100644
      # Finger retargeting
      Q_lf = Q_rf = None
      finger_jnames: list[str] = []
-@@ -312,6 +415,51 @@ def run(args: argparse.Namespace) -> None:
+@@ -312,6 +442,51 @@ def run(args: argparse.Namespace) -> None:
              elif last is not None: Q_rf[t] = last
          finger_jnames = finger_jnames or rt_r.joint_names
  
@@ -376,7 +410,7 @@ index f8f1b5f..29d0674 100644
      # Build env for joint names + rendering
      scene_path = _robot_cfg.get("scene_path_fingers", _robot_cfg["scene_path"])
      env_vis = _robot_cfg["env_cls"](
-@@ -350,6 +498,12 @@ def run(args: argparse.Namespace) -> None:
+@@ -350,6 +525,12 @@ def run(args: argparse.Namespace) -> None:
              draw_hand_keypoints(img, all_right_j[t], K, (0, 100, 220))
          cv2.putText(img, f"{t+1}/{seq_len}  {robot_name}  a={args.torso_alpha:.2f}",
                      (8, vid_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
@@ -389,7 +423,7 @@ index f8f1b5f..29d0674 100644
          input_frames.append(img)
  
      robot_frames = render_robot_sim(
-@@ -359,7 +513,9 @@ def run(args: argparse.Namespace) -> None:
+@@ -359,7 +540,9 @@ def run(args: argparse.Namespace) -> None:
      save_trajectory(out_dir / "trajectory.npz",
                       q_left, q_right, Q_lf, Q_rf,
                       l_jnames, r_jnames, finger_jnames,
@@ -400,10 +434,18 @@ index f8f1b5f..29d0674 100644
      np.savez(out_dir / "root_frames.npz",
               R_per_frame=R_per_frame.astype(np.float32),
               t_per_frame=t_per_frame.astype(np.float32),
-@@ -368,6 +524,44 @@ def run(args: argparse.Namespace) -> None:
+@@ -368,6 +551,52 @@ def run(args: argparse.Namespace) -> None:
      write_video(out_dir / "input_viz.mp4",  input_frames,  seq_fps)
      write_video(out_dir / "robot_sim.mp4",  robot_frames,  seq_fps)
  
++    # web2robot: 整段/轨迹段两层的报告。默认跑法 _tier_report 是空的 → **不写文件**
++    # （多一个文件也算产物变了）。
++    if _tier_report:
++        from web2robot.retarget.fallback import save_tier_report
++        save_tier_report(out_dir / "bad_frame_tiers.json", _tier_report,
++                         clip=clip_path.name, robot=robot_name)
++        print(f"坏帧三层报告 → {out_dir / 'bad_frame_tiers.json'}")
++
 +    # web2robot: 物体 6D 位姿（EgoEngine §3.1 数字孪生）。默认 off。
 +    # 帧数/帧率用 seq 的口径传进去，保证和手部轨迹逐帧对齐。
 +    if args.object_tracking == "on":
@@ -445,7 +487,7 @@ index f8f1b5f..29d0674 100644
      def _roughness(q):
          return float(np.mean(np.diff(q, axis=0) ** 2))
      np.savez(
-@@ -425,7 +619,7 @@ def _parse() -> argparse.Namespace:
+@@ -425,7 +654,7 @@ def _parse() -> argparse.Namespace:
  
      # ── I/O ───────────────────────────────────────────────────────────────────
      p.add_argument("--robot",  default="g1",
@@ -454,7 +496,7 @@ index f8f1b5f..29d0674 100644
                     help="Target robot to retarget to.")
      p.add_argument("--ckpt",   default=None, metavar="PATH",
                     help="Path to model checkpoint. "
-@@ -447,6 +641,17 @@ def _parse() -> argparse.Namespace:
+@@ -447,6 +676,17 @@ def _parse() -> argparse.Namespace:
      p.add_argument("--n_clusters",         type=int,   default=5,
                     help="Number of SE(3) K-medoids clusters used to find the "
                          "best root anchor from all window estimates.")
@@ -472,7 +514,7 @@ index f8f1b5f..29d0674 100644
      p.add_argument("--torso_alpha",        type=float, default=0.3,
                     help="Translation blend weight between the global anchor "
                          "(0) and the per-window estimate (1). Lower values "
-@@ -460,6 +665,52 @@ def _parse() -> argparse.Namespace:
+@@ -460,6 +700,52 @@ def _parse() -> argparse.Namespace:
                          "per-frame root trajectory after interpolation. "
                          "Set to 0 to disable.")
  
@@ -525,7 +567,7 @@ index f8f1b5f..29d0674 100644
      # ── IK / post-processing ──────────────────────────────────────────────────
      p.add_argument("--tol_pos",       type=float, default=0.01,
                     metavar="M",
-@@ -471,6 +722,103 @@ def _parse() -> argparse.Namespace:
+@@ -471,6 +757,121 @@ def _parse() -> argparse.Namespace:
      p.add_argument("--self_collision", action="store_true",
                     help="Run gradient-based self-collision post-processing "
                          "(CollisionFilter) on the final joint trajectory.")
@@ -576,7 +618,25 @@ index f8f1b5f..29d0674 100644
 +                        "rest-pose fallback.")
 +    p.add_argument("--no_bad_frame_detect", action="store_true",
 +                   help="With --bad_frame_fallback, handle only missing frames "
-+                        "and skip implausible-value rejection. For ablation.")
++                        "and skip implausible-value rejection. For ablation. "
++                        "Equivalent to dropping 'frame' from --bad_frame_tiers; "
++                        "both are folded into one tier set at the call site.")
++    p.add_argument("--bad_frame_tiers", default="frame", metavar="LIST",
++                   help="Which granularities of bad-frame filtering to run "
++                        "(EgoSmith, EgoSteer arXiv 2607.09701): comma-separated "
++                        "subset of episode,segment,frame. Default 'frame' = "
++                        "today's behaviour, byte-identical output. 'frame' is "
++                        "the per-frame detector already in "
++                        "web2robot/trajectory/traj_cleanup.py (needs "
++                        "--bad_frame_fallback to have any effect). 'episode' "
++                        "checks the camera-motion distribution for outliers and "
++                        "only WARNS -- the clip still runs the whole pipeline. "
++                        "'segment' marks spatial outliers of wrist/finger "
++                        "coordinates per chunk and does NOTHING else (no "
++                        "interpolation, no dropping); the marks go to "
++                        "bad_frame_tiers.json for refine/ to consume. Both new "
++                        "tiers implement docs/VIDEO_SELECTION_GUIDE.md "
++                        "§V2/§V3 as a post-hoc check.")
 +    p.add_argument("--rest_fallback", action="store_true", default=True,
 +                   help="Ease the arm to the robot's start configuration across "
 +                        "gaps too long to interpolate, instead of freezing it on "

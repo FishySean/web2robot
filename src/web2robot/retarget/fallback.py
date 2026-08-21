@@ -27,14 +27,25 @@
 （它改的是解出来的关节角），而 ``FILL_REST`` 这个标记是前者产生、后者消费的。
 
 2026-08-10 从上游 ``scripts/test.py`` 里搬出来（原来是 run() 中间的三段内联代码）。
+
+## 2026-08-21：多了两个**只看不动**的粒度
+
+``run_extra_tiers`` 跑 EgoSmith 的整段/轨迹段两层（判据在
+``trajectory/tiers.py``）。它和上面两处的性质**完全不同**：那两处会改喂给 IK 的目标
+和解出来的关节角，这一处**一个数都不改** —— 整段级只打警告（视频照样跑完），
+轨迹段级只写标记（留给 ``refine/`` 自己决定要不要升级精修）。所以它在流水线里放哪
+都不影响产物，选在"原始轨迹拿到手、视频帧也读进来了"之后，是为了让警告尽早打出来。
 """
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional, Sequence
 
 import numpy as np
 
 from web2robot.trajectory.traj_cleanup import (
     FILL_REST, STATUS_NAMES, blend_to_rest, clean_wrist_trajectory, relax_fingers,
+)
+from web2robot.trajectory.tiers import (
+    episode_camera_check, segment_spatial_check,
 )
 
 
@@ -147,5 +158,83 @@ def status_overlay_text(status_left, status_right, t: int) -> str:
     return " ".join(tags)
 
 
+# ── EgoSmith 的另外两个粒度（整段 / 轨迹段）：只看不动 ─────────────────────────
+
+def run_extra_tiers(
+    tiers:      Sequence[str],
+    raw_left:   np.ndarray,           # (T,7) 带 NaN 的原始左手腕轨迹（相机系）
+    raw_right:  np.ndarray,
+    fps:        float,
+    frames:     Optional[Sequence[np.ndarray]] = None,   # 逐帧图像，整段级要
+    joints_left:  Optional[np.ndarray] = None,           # (T,21,3) 相机系关键点
+    joints_right: Optional[np.ndarray] = None,
+    seg_sec:    float = 2.0,
+    log: Callable[[str], None] = print,
+) -> Dict[str, Any]:
+    """跑 ``tiers`` 里除 ``frame`` 以外的粒度，返回可直接写 json 的 report。
+
+    ``frame`` 那一层**不在这里** —— 它是 :func:`clean_input_wrists` 的一部分
+    （``detect_bad=True``），因为只有它会改数据、要在 IK 之前就位。这里只跑两个
+    "只看不动"的粒度，所以调用点放哪都不影响产物。
+
+    返回 ``{}`` 表示两层都没开 —— 调用方据此决定**不写**报告文件，默认跑法的产物
+    因此和以前逐字节一样（多一个文件也是"变了"）。
+    """
+    want = set(tiers)
+    report: Dict[str, Any] = {}
+    if not (want & {"episode", "segment"}):
+        return report
+
+    report["tiers"] = [t for t in ("episode", "segment", "frame") if t in want]
+
+    if "episode" in want:
+        if not frames:
+            report["episode"] = {"warn": False, "reason": "没有视频帧可用，整段级跳过"}
+            log("  [tier:episode] 没有视频帧可用 → 跳过")
+        else:
+            ep = episode_camera_check(frames)
+            report["episode"] = ep.to_dict()
+            # 只警告，不阻断（策略见 trajectory/tiers.py 的 docstring）
+            log(f"  [tier:episode] {'⚠ ' if ep.warn else ''}{ep.reason}")
+            if ep.warn:
+                log("      —— 依据 VIDEO_SELECTION_GUIDE.md §V2/§V3。"
+                    "这段视频**照样跑完**，弃不弃用请人看画面决定")
+
+    if "segment" in want:
+        marks = []
+        for side, traj, jts in (("left", raw_left, joints_left),
+                                ("right", raw_right, joints_right)):
+            marks += [f.to_dict() for f in segment_spatial_check(
+                traj, jts, fps, side=side, seg_sec=seg_sec)]
+        report["segment"] = {"seg_sec": seg_sec, "findings": marks,
+                             "clause": "§V2/§V3"}
+        n_w = sum(1 for m in marks if m["kind"] == "wrist_outlier")
+        n_f = sum(1 for m in marks if m["kind"] == "finger_outlier")
+        log(f"  [tier:segment] {len(marks)} 处空间离群标记"
+            f"（手腕 {n_w} / 手指 {n_f}）—— **不做任何自动处理**，"
+            f"留给 refine 决定要不要升级精修")
+    return report
+
+
+def save_tier_report(path, report: Dict[str, Any], clip: str = "",
+                     robot: str = "") -> None:
+    """把 :func:`run_extra_tiers` 的 report 写成 json。
+
+    json 而不是 npz：这份东西是给人看的警告 + 给下游读的帧区间，字段是嵌套字典，
+    npz 存不下（会退化成 0-d object 数组，读的人得 ``.item()``）。
+    """
+    import json
+    from pathlib import Path
+
+    out = dict(report)
+    out["clip"] = clip
+    out["robot"] = robot
+    out["source"] = ("EgoSmith / EgoSteer arXiv 2607.09701 post-filtering；"
+                     "判据依据 docs/VIDEO_SELECTION_GUIDE.md §V2/§V3；"
+                     "处置策略（只警告/只标记）是我方决定，与原文的 discard 不同")
+    Path(path).write_text(json.dumps(out, ensure_ascii=False, indent=1))
+
+
 __all__ = ["InputCleanup", "clean_input_wrists", "apply_rest_fallback",
-           "relax_fingers_on_rest", "status_overlay_text"]
+           "relax_fingers_on_rest", "status_overlay_text",
+           "run_extra_tiers", "save_tier_report"]

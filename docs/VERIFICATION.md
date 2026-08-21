@@ -359,6 +359,145 @@ f175 / f188 两张图能直接看出来：新策略两手停在最后一次测�
 全片段普查（11 个官方片段）确认这次改动只翻了三处片尾（serve_cake 左 17f / 右 44f、
 ours_webapple 右 58f），别的空洞一帧没动。
 
+### 坏帧过滤的另外两个粒度（episode / segment，2026-08-21）
+
+`trajectory/tiers.py`，判据来源是 EgoSmith（EgoSteer，arXiv 2607.09701 §3）那套按
+**三个粒度分别设判据**的清洗管线。frame 级早就有了（上一节那个 `traj_cleanup.py`），
+这次补的是 episode 和 segment。开关 `--bad_frame_tiers episode,segment,frame`，
+**默认 `frame`，等于现状不变**。
+
+```bash
+# 1. 单测：26 个用例，秒级（判据本身 + "什么都不改"这件事）
+envs/rt_env/bin/python -m unittest tests.test_badframe_tiers -v
+
+# 2. 端到端：三层全开 vs 默认跑法，产物必须逐字节相同
+bash scripts/dev/check_tiers_yaml_bytes.sh > outputs/dev/tiers_yaml_bytecheck.log 2>&1
+```
+
+**这里"验过了"具体指什么**（三条，都是实测不是推理）：
+
+1. **默认跑法的产物一个字节没变。** 参照物是 A1 标定那次留下的
+   `outputs/dev/neural_bytecheck/base/`，时间戳早于本次全部改动，`cmp` + md5 双查。
+   2026-08-21 实测三个 SAME：`trajectory.npz` = `9ef35b4eed590c543ae4af9c9b89e5c9`、
+   `metrics.npz` = `33c049ac5b26fd848cdbcfa93321fae8`、
+   `robot_sim.mp4` = `205d96dba4a701e4be19a88ff1ec0483`（这个数和
+   `external/patches/README.md` 里那个对得上，是同一条参照线）。
+   为什么非要真跑：这次动了上游 `scripts/test.py` 的 **argparse**，而 argparse 的
+   参数顺序都可能挪动随机数流 —— 这是这份文档里已经栽过一次的坑（见文末方法论第 4 步）。
+2. **三层全开时"只看不动"。** `tiers` 那一遍和 `base` 比 `trajectory.npz` /
+   `root_frames.npz` / `metrics.npz` / `robot_sim.mp4` / `input_viz.mp4` 五个全同
+   （2026-08-21 实测 5/5 SAME），只许多出 `bad_frame_tiers.json` 一个文件；
+   反过来 `base` 里**不许**有这个文件（多写一个文件也算产物变了，实测确认没有），
+   `base.log` 里 `[tier:` 出现 **0** 次。单测那边还有一条更狠的：
+   `test_nothing_is_modified` 用 `np.array_equal(..., equal_nan=True)` 逐位比
+   输入数组，连 NaN 的位置都得一样。
+3. **检出之后的处理方式和论文不同，是我们定的。** episode 级**只警告不阻断**、
+   segment 级**只标记不处理**（不插值/不丢弃/不填补）。实测那段官方片段
+   （`-1r9yl-P-Ao_86.3_90.8`）打的就是这个：
+   ```
+   [tier:episode] 相机运动分布正常（2/68 对帧离群，占 2.9%）
+   [tier:segment] 7 处空间离群标记（手腕 1 / 手指 6）—— **不做任何自动处理**，
+                  留给 refine 决定要不要升级精修
+   ```
+   episode 这次判的是"正常"（`warn: false`，2.9% < `frac_thresh` 5%，但 `max_robust_z`
+   到了 5.3，所以 f23/24 那两帧还是记进了 `outlier_frames` —— **判决和证据分开写**，
+   人要复核有据可查）。segment 那 7 处 **全部原样留在 json 里**，`trajectory.npz`
+   逐字节没变就是它"什么都没做"的证据。报告里还带一行 `source`，把出处
+   （arXiv 2607.09701）、判据依据（§V2/§V3）、和"处置策略是我方决定、与原文 discard
+   不同"三件事写在产物里，免得下游读到这个 json 的人以为该照论文那样扔掉。
+
+**一处判据本身的修正（单测逼出来的，值得记）：** 稳健 z 原来只有 MAD 一个尺度，
+`MAD == 0` 就直接返回全零"没有离群"。但**零阶保持填补过的段是逐位常量**，MAD 恰好
+为 0 —— 于是一段"常量 + 一个 25 cm 尖峰"会被判成干净的。这是真盲区不是测试写错，
+所以改的是统计量：MAD 为 0 时退到平均绝对偏差尺度（`1.253314`，Iglewicz–Hoaglin
+原文自己给 MAD=0 开的那条路），两个分支各有一个用例钉住
+（`test_hold_filled_segment_with_one_spike_is_still_caught` /
+`test_truly_constant_segment_is_not_flagged`）。
+
+阈值那三个数（`z_thresh=3.5` / `frac_thresh=0.05` / `seg_sec=2.0`）**是惯例不是实测**，
+以及我们做不到原文哪一步（跨语料离群、硬旋转阈值），记在
+[`BACKLOG.md`](BACKLOG.md) C19/C20，模块 docstring 里也逐条写了。
+
+### 机器人参数搬进 yaml（2026-08-21）
+
+格式借 HandUMI（robonet-ai.github.io/handumi-sw）的机器人配置设计：**一台机器人一个
+yaml**，装关节限位 / 静息姿态 / 碰撞参数，每组带 `verified: true|false`。只借格式，
+数值全是我们自己的。入口 `robots/params.py`，文件 `configs/robots/{m7,l3_4}.yaml`。
+
+```bash
+# 1. 单测：17 个用例，秒级
+envs/rt_env/bin/python -m unittest tests.test_robot_params_yaml -v
+
+# 2. 看哪些数字是实测的（✅ / ⬜ 一览）
+envs/rt_env/bin/python -m web2robot.robots.params m7
+
+# 3. 端到端：同上那个脚本（搬参数和加 tiers 是同一次改动，一起验的）
+bash scripts/dev/check_tiers_yaml_bytes.sh > outputs/dev/tiers_yaml_bytecheck.log 2>&1
+```
+
+**为什么这件事非要端到端实测**，光看代码不够：搬参数踩的坑不在数值上，在**类型**和
+**求值时机**上。实际遇到的两个 ——
+
+* PyYAML 把 `1e-3` 读成**字符串**（它的 float 解析器要求有小数点和带符号的指数），
+  所以 yaml 里必须写 `0.001`；
+* `CONFIG["start_config"]` 存的是 **float32**，`0.20` 取出来是 `0.20000000298023224`，
+  拿 yaml 的 float64 去比会红 —— 比较必须在 float32 上做。
+
+还有 list vs tuple（`GRID["torso_half"]` 要 tuple，调用方直接往 `M7CapsuleModel` 传，
+不该能被就地改掉）。这些都是"逐位相同"级别的差别，只有比 md5 才发现。
+
+**"不留第二份"是怎么钉住的**（`tests/test_robot_params_yaml.py` 三件事）：
+
+1. **AST 扫 `src/**/*.py` 的浮点字面量**去撞已搬走的那 15 个数。用 AST 而不是 grep 是
+   故意的 —— 注释和 docstring 里引用 MJCF 原值**应该**留着，只有代码里的字面量才算
+   第二份来源。搬迁时这条真的抓到一处：`scripts/dev/sweep_arm_torso_params.py` 自己
+   抄了一份 `MESH_HALF`（标定脚本的分母和被标定的代码不同源，扫出来的比例会悄悄错位），
+   已改成从 `presets.MESH_HALF` 读。
+2. **构造签名的默认值 == yaml 里那个数。** yaml 在 **import 时**加载，加载到的值**就是**
+   `__init__` 的默认值，所以 `inspect.signature(ArmTorsoFilter.__init__)` 拿到的
+   `enter_thresh` 仍然是 `0.04`，`tests/test_module_boundaries.py` 那边钉的"这个数必须是
+   0.04"照旧过。两个测试合起来才完整：一个守数值，一个守来源。
+3. **`verified: true` 按名单钉死。** 只有两组：`collision.arm_torso.routes.grid`
+   （A1 那次 sweep 标定的 `torso_half=[0.0695, 0.119, 0.239]` / `enter_thresh=0.02` /
+   `margin=0.02`）和 `collision.mesh_aabb_half`（量自躯干网格 AABB，是 sweep 的分母）。
+   谁想给一组没标定过的参数标 true，必须先来改这个名单 —— 这个标志位的全部价值就是
+   让人分清"实测"和"暂时用着"，一旦扩散就废了。
+
+**yaml 里的数真的送进了 MuJoCo，不只是被 import 了。** 上面那个脚本第 4 遍跑
+`--root_solver grid --atf_preset auto`，过滤器自己打出来的就是 yaml 里那一组
+（2026-08-21 实测）：
+
+```
+[ArmTorsoFilter] enter_thresh=0.020m margin=0.020m w_pen=20.0 w_ee=60.0 w_prox=1.0
+                 torso_half=[0.0695, 0.119, 0.239]
+[ArmTorsoFilter] left: fixed 25/25 (remaining 0); right: fixed 46/46 (remaining 0)
+```
+
+对照 `neural` 那两遍打的是过滤器默认值（`enter_thresh=0.040m margin=0.000m
+torso_half=[0.105, 0.135, 0.215]`）—— 两条路线各取各的一组，这才叫"预设按路线生效"。
+只验单测不跑这一遍是不够的：单测能证明 `presets.GRID` 等于 yaml，证明不了它被传到了
+构造函数里。
+
+**两个刻意的"不"**：
+
+* **`neural` 路线标 `verified: false`。** 它的覆盖集是**空的** —— 空覆盖集谈不上标定过。
+  它的凭据是字节级 md5（`check_neural_bytes.sh`），不是量出来的数字，yaml 的 `source`
+  字段就这么写的。
+* **L3.4 没有 `collision:` 一节。** 这是主张不是漏写，有测试
+  （`TestL34HasNoCollisionSection`）钉住。写一节 `verified: false` 的复制品进来，只会
+  让人以为"L3.4 也支持，参数就在这儿"。见 [`BACKLOG.md`](BACKLOG.md) C21。
+* **两台机器人的 yaml 不用 anchor 共享。** 数值目前相同（量过的），但各自的 MJCF 才是
+  各自的真源；共享会在哪天拿到不同批次机器人的时候，把 M7 的数悄悄按到 L3.4 上。
+
+**哪些参数刻意**不**进 yaml**：body 名、骨骼拓扑、指尖清单、`TORSO_CENTER`、骨半径 ——
+这些是**结构事实**，唯一真源是 MJCF，留在模型旁边。判据是"标定扫描能不能设它"
+（= 是不是构造参数）：能设的进 yaml，结构事实不进。写错一个 body 名不会报错，
+`pytorch_kinematics` 会安静地建出一条空链。
+
+搬迁过程中看出来的数值疑点**一个都没改**，记在 [`BACKLOG.md`](BACKLOG.md) C18
+（代理盒比网格 AABB 收了 3 cm 没依据、`start_config` 的 ±0.20 从没比过、
+`arm_torso.defaults` 11 个里只有 3 个标定过）—— 参数改动是单独一件要决策的事。
+
 ## M7 机器人定义（`src/web2robot/robots/m7/`、`assets/robots/m7/`）
 
 两个验收脚本，输出要和上一次逐字节一致：

@@ -110,7 +110,7 @@
 | C6 | `scripts/dev/audit_retarget_feasibility.py` | 还没写 |
 | C7 | episode 级判决聚合器 | 现在判据都是逐帧的 |
 | C8 | 重投影–分割 IoU 自检 | Ego2Robot 质检里值得抄的一条 |
-| C9 | per-embodiment robot YAML | 抄 HandUMI 的写法 |
+| ~~C9~~ | ~~per-embodiment robot YAML~~ | **2026-08-21 做完**（编号退役不复用）：`configs/robots/{m7,l3_4}.yaml` + `robots/params.py`，照 HandUMI 的格式（一机一 yaml + `verified` 标志位），代码侧唯一来源由 `tests/test_robot_params_yaml.py` 守。搬迁中发现的数值疑点见 C18–C20 |
 | C10 | VLM 语义一致性检查 | ①② 暂停期间一起搁着 |
 | C11 | 视觉合成（新视角/渲染）那一摊 | 已归档，明确不占精力 |
 | C12 | 前端控制台 | 见 [TODO22_FRONTEND_CONSOLE.md](TODO22_FRONTEND_CONSOLE.md) |
@@ -119,6 +119,10 @@
 | C15 | §V5"机器人抽搐 ⇔ 切镜"的定量复现 | 现在是**有机理支撑的观察，本仓库没有数字** —— 我们端到端跑的官方片段本身不含切镜。做法：找一段有切镜的原始视频跑完整条链，看 `root_frames.npz` 的位姿和 `trajectory.npz` 的关节角在切镜帧上的**一阶差分尖峰**位置和 ffmpeg 报的切点对不对得上。做完把数字写进 §V5，把"未定量复现"那句删掉 |
 | C16 | 手部目标 lift 到世界系 + 在世界系里搜根位姿（解开 §V3 的朝向禁令） | 现在整条链的手部 IK 目标是**相机系**的（`utils/pose_utils.py::cam_to_root_targets` 算 `p_root = R_rootᵀ(p_hand_cam − t_root)`），而 grid 路线的躯干位姿是 `np.broadcast_to(_sol.R, (T,3,3))` —— **相机系里的一个常量**。后果：相机一转/一走，假的手部位移 1:1 注入，所以 §V3 只能写成无条件禁止转身转头。要真正支持"人转头/走位"的素材，得 ① 把手腕轨迹用相机位姿 lift 到世界系（HaWoR 那条路线本来就有世界系输出，只是 clip 契约没往下传，喂的是 `left_cam_np`）；② 网格搜索改在世界系里做，或者让根位姿逐帧跟随相机而不是被 `--torso_alpha` 往锚点压。**大改，动的是 upstream 接口，不在当前范围。** 做之前先做 C17 确认收益值不值 |
 | C17 | 坐实 §V2 那四个数（1°→0.9 cm / 5°→4.4 cm / 30°→26 cm / 一步→60 cm） | 现在是拿 `cam_to_root_targets` 的公式和默认值（`--tol_pos 0.01`、`margin 0.02`、M7 实测 `r_max 1.007`）推出来的**几何推论**，不是端到端实测。做法：拿一段官方片段，人工往相机位姿上注入已知的旋转 θ / 平移 d，量重定向输出的手部末端位置偏移是不是跟着 `d·θ` 走，顺便看 ik_rate 和残余穿透从哪个角度开始塌。做完把 §V2 那句"几何推论，不是实测"换成实测数 |
+| C18 | `verified: false` 那些数字里，真正"从没量过"的三处 | YAML 搬迁（C9）时逐个看过来的，**只记录、一个数都没改** —— 参数改动是单独一件要决策的事，改完还得重跑 `check_neural_bytes.sh`。① `collision.proxy.torso_half=[0.105, 0.135, 0.215]` 和 `tip_radius=0.012`：代理盒比躯干网格 AABB `[0.139, 0.170, 0.239]`（这个是量的，`verified: true`）三轴各收了 3.4/3.5/2.4 cm，**为什么收这么多没有依据**，是当初手挑的；② `ik.start_config` 的肩外展 ±0.20 rad 从没和别的静息姿态比过 ik_rate，就是个看着顺眼的种子；③ `collision.arm_torso.defaults` 那 11 个值里只有 grid 路线覆盖的 3 个（`torso_half`/`enter_thresh`/`margin`）被 sweep 标定过，剩下 8 个（`w_pen`/`w_ee`/`w_prox`/`fd_eps`/…）是默认值。要动的话：先扫一遍，再改 yaml，再重跑字节验证 |
+| C19 | 新增两层坏帧粒度的三个阈值是**惯例，不是实测** | `trajectory/tiers.py` 里 `z_thresh=3.5`（Iglewicz–Hoaglin 论文的建议值）、`frac_thresh=0.05`（"5% 帧离群才算整段有问题"）、`seg_sec=2.0`（轨迹段长度）—— 都是拿约定值起的头，没在我们的素材上扫过。做法：拿 HF 那 106 段官方片段跑一遍，人工标"这段镜头是不是真的乱"，看这三个数在什么组合下和人工判断吻合。注意判据是**只警告/只标记**，所以误报的代价比漏报低，别照抄论文的剔除口径来定阈值 |
+| C20 | episode 级只能做 clip **内部**的离群，跨语料的做不了 | EgoSmith 原文（arXiv 2607.09701 §3）是在整个语料上算相机平移分布再丢离群 episode；我们的 pipeline 一次只见一个 clip，所以 `episode_camera_check` 判的是"这段片子内部有没有几对帧的机位运动格外大"。真正的跨语料离群该在质检阶段做（C14 那一摊，`quality/` 已经有 `_camera_motion_score_flow` 的分数，缺的是把整批分数存下来再回头比）。同一条：原文那个"硬旋转阈值丢掉头部大幅转动的 episode"我们**没有对应物** —— clip 契约里没有逐帧相机位姿（`camera.json` 只有内参 + 重力），光流也分不开平移和旋转，所以警告文案只能把 §V2/§V3 一起引 |
+| C21 | L3.4 一个碰撞参数都没标定过 | `configs/robots/l3_4.yaml` **刻意没有 `collision:` 一节**（`tests/test_robot_params_yaml.py::TestL34HasNoCollisionSection` 把这条"故意不写"钉住了，免得有人把一份 `verified: false` 的复制品读成"L3.4 也支持"）。现在那套过滤器是 M7 专用的：代理盒挂 `waist_pitch_link`、body 名写死 `left/right_hand_frame`。等真要支持 L3.4，加 yaml 那一节的同时必须连标定一起加 |
 
 ## D. 不是技术活，但会忘
 

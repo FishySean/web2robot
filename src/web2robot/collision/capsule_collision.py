@@ -17,10 +17,24 @@ read their world poses (data.xpos / data.xmat) after mj_forward:
 Signed distance is arm-capsule vs torso-box: negative == penetration.  The
 torso box is deliberately CONSERVATIVE (shrunk half-extents) so only clear
 "arm through the body" cases go negative, per the agreed conservative policy.
+
+Where the numbers live
+----------------------
+The proxy's two tunables (torso box half-extents, fingertip sphere radius) are
+read from `configs/robots/m7.yaml` (`collision.proxy`) rather than written here,
+so there is exactly one place to look up "what box is this run using" and one
+place recording that they are hand-shrunk, not calibrated.  This module reads
+M7's file directly because it is M7-specific anyway (class name, `waist_pitch_link`,
+the hand-frame body names); when a second robot needs a proxy, the robot name
+becomes a constructor argument.
 """
 
 import mujoco
 import numpy as np
+
+from web2robot.robots.params import robot_params as _robot_params
+
+_M7_PROXY = _robot_params("m7")["collision"]["proxy"]
 
 
 # ---- geometry helpers -------------------------------------------------------
@@ -66,9 +80,19 @@ class M7CapsuleModel:
     # torso box: on waist_pitch_link, from the trunk mesh AABB
     # (pos=[-0.003,0,0.24], size=[0.139,0.17,0.239]).  Shrunk to be conservative
     # so arms grazing the body surface are not flagged, only real pass-through.
+    #
+    # TORSO_HALF / TIP_RADIUS are the *tunable* pair, so they live in
+    # configs/robots/m7.yaml (collision.proxy) — one source, and the yaml records
+    # that they are hand-shrunk rather than calibrated (verified: false).  Note the
+    # `grid` route overrides them per-instance via presets, which is why the class
+    # attribute must stay at the historical value: `neural` is byte-guarded on it.
+    # TORSO_CENTER and the BONES/FINGERTIPS tables below stay here on purpose —
+    # body names and the mesh's own offset are structural facts whose only truth is
+    # the MJCF, and the bone radii are meaningless apart from the link pair they
+    # annotate.
     TORSO_BODY = "waist_pitch_link"
     TORSO_CENTER = np.array([-0.003, 0.0, 0.24], dtype=np.float64)
-    TORSO_HALF = np.array([0.105, 0.135, 0.215], dtype=np.float64)  # shrunk from .139/.17/.239
+    TORSO_HALF = np.array(_M7_PROXY["torso_half"], dtype=np.float64)  # shrunk from .139/.17/.239
 
     # arm bones: (parent link, child link giving the segment vector, radius).
     # radius from the link geom cross-section half-extent (upper ~0.05, fore ~0.045).
@@ -96,7 +120,7 @@ class M7CapsuleModel:
                   "right_hand_mid_link2", "right_hand_ring_link2",
                   "right_hand_pinky_link2"],
     }
-    TIP_RADIUS = 0.012
+    TIP_RADIUS = float(_M7_PROXY["tip_radius"])
 
     def __init__(self, model, torso_half=None, tip_radius=None):
         """`torso_half` / `tip_radius` override the proxy's safety margins.

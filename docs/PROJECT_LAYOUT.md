@@ -19,6 +19,7 @@
 | 跑出来的视频 / npz / clip | `outputs/`，按"谁写的"分子目录（见 §4） |
 | 原始视频素材 | `data/` |
 | 机器人 MJCF / mesh | `assets/robots/<机器人名>/`（`m7`、`l3_4`） |
+| 机器人参数（关节限位 / 静息姿态 / 碰撞盒与门槛） | `configs/robots/<机器人名>.yaml` —— **一台机器人一个文件，代码里不留第二份**；每组带 `verified` 说明是不是实测标定的 |
 | 绝对路径、checkpoint 位置 | `configs/paths.yaml` —— **全工程唯一允许写绝对路径的文件** |
 | 我们对第三方仓库改了什么 | `external/patches/README.md` |
 | 某个决定当时为什么那么定 | `docs/` + 各模块 `__init__.py` 的文档字符串 |
@@ -48,6 +49,8 @@ web2robot/
 │   ├── robots/                  机器人定义（IK 链、hand_frame 约定、采样配置）
 │   │                            ——**不 import 任何重定向框架**，换框架时不用改；
 │   │                            **两台机器人之间也不互相 import**，各自以自己的 MJCF 为真源
+│   │   ├── params.py            读 `configs/robots/<机器人>.yaml`（IK 关节限位/静息姿态/
+│   │   │                        碰撞参数的**唯一来源** + `verified` 标志位）
 │   │   ├── m7/                  M7（RoboEra），双 7-DoF 臂 + 两只 12-DoF 手 + 升降柱
 │   │   └── l3_4/                L3.4（rel3_4），同一双臂同一只手，挂在腰+腿上；
 │   │                            本阶段只做上肢，腰/颈/腿 17 个自由度锁死在 `LOCKED_JOINTS`
@@ -58,6 +61,10 @@ web2robot/
 │   │                            只判不解 —— mpc/rl 求解器未实现，明确报错
 │   ├── collision/   ══════ ⑤碰撞检测      臂-躯 / 双手 / 手指胶囊过滤
 │   ├── trajectory/  ══════ ⑤轨迹处理      坏帧三级检测 + 长度感知填补
+│   │   ├── traj_cleanup.py      **逐帧**那一层（跳变/鼓包/四元数翻转）+ 填补
+│   │   └── tiers.py             EgoSmith 的另外两个粒度（整段/轨迹段），
+│   │                            `test.py --bad_frame_tiers` 切换，默认只有 frame；
+│   │                            **只警告/只标记，一个数都不改**
 │   └── eval/                    评测代码（给 evidence/ 算表用，纯 numpy、秒级）
 │
 ├── scripts/                 ← 薄壳：只负责"用对的解释器 + 设好 PYTHONPATH"，不含逻辑
@@ -67,10 +74,15 @@ web2robot/
 │   └── dev/                     开发期工具：check_* 回归比对、render_*/viz_* 出片、
 │                                 build_l3_4_assets.py（从厂家原包生成 L3.4 资产）
 │
-├── tests/                   ← stdlib unittest，秒级，301/301
+├── tests/                   ← stdlib unittest，秒级，344/344
 │   └── regression/              回归基准片段 + 期望判决（qc.jsonl / contact_sheet.png）
 │
-├── configs/paths.yaml       ← 唯一允许写绝对路径的地方。换机器只改这一个文件
+├── configs/
+│   ├── paths.yaml           ← 唯一允许写绝对路径的地方。换机器只改这一个文件
+│   └── robots/<机器人>.yaml ← **一台机器人一个文件**（格式借 HandUMI）：IK 关节限位 /
+│                              静息姿态 / 碰撞参数，每组带 `verified: true|false` 说明
+│                              这些数字是实测标定的还是"暂时用着"的默认值。
+│                              代码侧唯一入口 `robots/params.py`，**不许留第二份**
 │
 ├── assets/                  ← 我们产出的资产，进 git
 │   ├── robots/m7/               MJCF / URDF / mesh / MJX（103 个文件）
@@ -217,7 +229,7 @@ web2robot/
 | `tests/regression/` | 质检的回归基准：3 段片 + 期望判决 + contact sheet |
 | `scripts/dev/audit_mujoco_contacts.py` | 用官方 MuJoCo mesh contacts 独立复核我方碰撞代理（只报告不改轨迹）。基线数字和命令在 [`VERIFICATION.md` 的⑤小节](VERIFICATION.md) |
 | `scripts/dev/collcmp_table.py` | 根位姿两条路线的**画面级**对比表（穿躯帧数 / 最深穿透 / 臂展利用率 ρ̄），吃 `run_collcmp.sh` 的产物，落 `outputs/dev/collcmp_table/`。`ik_rate` 单独看会把"穿躯换来的高可行率"记成进步，这张表就是钉这一点的。`--proxy` 决定漏/误两列用哪把尺子（每条路线自己标定的盒子 / 类默认盒），口径连同 `torso_half` 一起写进 `results.json` |
-| `scripts/dev/sweep_arm_torso_params.py` | 臂-躯代理盒的**标定**：拿 MuJoCo 真实网格 contacts 当真值，phase1 纯几何穷举盒半长（秒级）、phase2 真跑过滤器扫门槛（分钟级）。素材必须是**没开碰撞过滤**的跑（用过滤后的产物标定是循环论证），落 `outputs/dev/collcal/`。结论进 [`collision/presets.py`](../src/web2robot/collision/presets.py) |
+| `scripts/dev/sweep_arm_torso_params.py` | 臂-躯代理盒的**标定**：拿 MuJoCo 真实网格 contacts 当真值，phase1 纯几何穷举盒半长（秒级）、phase2 真跑过滤器扫门槛（分钟级）。素材必须是**没开碰撞过滤**的跑（用过滤后的产物标定是循环论证），落 `outputs/dev/collcal/`。结论进 [`configs/robots/m7.yaml`](../configs/robots/m7.yaml) 的 `collision.arm_torso.routes.*`（标 `verified: true`），[`collision/presets.py`](../src/web2robot/collision/presets.py) 只是把它读出来 |
 | `scripts/dev/run_collcal_ab.sh` + `check_neural_bytes.sh` | 标定的验收：13 段 grid 路线重跑一遍出前后对照；neural 路线跑两遍比 md5，钉"另一条路线一个字节都没动" |
 | `scripts/dev/make_readme_assets.py` | 生成 README 里那两张图（碰撞修复前后对照 / 输入-输出并排 GIF），落 [`docs/assets/`](assets/)。**全工程唯一一个产物不落 `outputs/` 的脚本** —— README 的图必须进 git，不然别人 clone 下来是一片红叉；命令和当前那两张图的来源 run 记在 [`VERIFICATION.md`](VERIFICATION.md) 里 |
 | [`docs/BACKLOG.md`](BACKLOG.md) | **被打断的活 + 欠账清单**。新消息是打断不是排队，做到一半被切走的事当场记这里，每条带"怎么续"（状态在哪个目录、下一步是哪个文件）。做完就删 |

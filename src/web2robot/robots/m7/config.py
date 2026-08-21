@@ -3,12 +3,17 @@ import numpy as np
 from web2robot.robots.m7.env import (
     M7Env, _SCENE_PATH, _MJCF_MJX_PATH, _ARM_JOINTS, _EE_BODY,
 )
+from web2robot.robots.params import robot_params as _robot_params
 
 # IK seed poses (arm order: shoulder_pitch, shoulder_roll, arm_yaw,
 # elbow_pitch, elbow_yaw, wrist_pitch, wrist_roll).
 # elbow_pitch bends negative (range -2.36..0.7); shoulder_roll abducts +left/-right.
-_START_L = np.array([0.0,  0.20, 0.0, -1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-_START_R = np.array([0.0, -0.20, 0.0, -1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+# The numbers live in configs/robots/m7.yaml (ik.start_config) — one source only.
+# This pose is also the rest pose the gap fallback ramps into, which is why it is
+# worth having a `verified` flag on: nobody has compared seeds or rest poses yet.
+_START = _robot_params("m7")["ik"]["start_config"]
+_START_L = np.array(_START["left"],  dtype=np.float32)
+_START_R = np.array(_START["right"], dtype=np.float32)
 
 CONFIG = {
     # ── environment ───────────────────────────────────────────────────────────

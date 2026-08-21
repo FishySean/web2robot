@@ -18,6 +18,15 @@ filter is deliberately EVEN MORE conservative than the torso one:
   * finger joints are never modified — the hands ride with the wrists.
 
 The same penetration-guarded temporal smoothing as ArmTorsoFilter is applied.
+
+Where the numbers live
+----------------------
+The constructor's defaults are read from `configs/robots/m7.yaml`
+(`collision.dual_hand.defaults`) — one home for the parameter set, and the yaml
+records that the conservative 4 cm threshold is a deliberate choice rather than a
+calibrated one (there is no ground truth for "hands interpenetrating": B4's check
+was on in-hand self-poking, which does not occur).  They remain real defaults, so
+`inspect.signature(...)` still sees 0.04 as `tests/test_module_boundaries.py` pins.
 """
 
 from __future__ import annotations
@@ -25,22 +34,26 @@ from __future__ import annotations
 import numpy as np
 import mujoco
 
+from web2robot.robots.params import robot_params as _robot_params, values as _values
+
 from .capsule_collision import HandSphereModel
+
+_D = _values(_robot_params("m7")["collision"]["dual_hand"]["defaults"])
 
 
 class DualHandFilter:
     def __init__(
         self,
         robot_cfg:    dict,
-        enter_thresh: float = 0.04,   # only correct when hands overlap deeper than this [m]
-        w_pen:        float = 20.0,   # push-apart weight (per metre of overlap)
-        w_ee:         float = 60.0,   # hold each hand-frame position [per m^2]
-        w_prox:       float = 1.0,    # stay near original joints [per rad^2]
-        w_temp:       float = 0.5,    # stay near previous corrected frame
-        max_iter:     int   = 60,
-        lr:           float = 0.03,
-        fd_eps:       float = 1e-3,
-        smooth_sigma: float = 2.0,
+        enter_thresh: float = _D["enter_thresh"],   # only correct when hands overlap deeper than this [m]
+        w_pen:        float = _D["w_pen"],   # push-apart weight (per metre of overlap)
+        w_ee:         float = _D["w_ee"],    # hold each hand-frame position [per m^2]
+        w_prox:       float = _D["w_prox"],  # stay near original joints [per rad^2]
+        w_temp:       float = _D["w_temp"],  # stay near previous corrected frame
+        max_iter:     int   = _D["max_iter"],
+        lr:           float = _D["lr"],
+        fd_eps:       float = _D["fd_eps"],
+        smooth_sigma: float = _D["smooth_sigma"],
         verbose:      bool  = True,
     ):
         self.enter_thresh = enter_thresh

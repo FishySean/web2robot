@@ -22,6 +22,13 @@ arm_yaw、elbow_pitch、elbow_yaw、wrist_pitch、wrist_roll。``JOINT_LIMITS`` 
 左右不是简单镜像：shoulder_roll 和 arm_yaw 的区间是镜像的（外展方向相反），
 其余五个两侧相同。
 
+## 数字本身在 ``configs/robots/m7.yaml``
+
+2026-08-21 搬过去的（``ik.joint_limits``）。**这里不留第二份** —— 原来这张表是写死在
+本文件里的，翻参数得进代码看，而且没地方记"这个数是抄 MJCF 的、还没人标定过"。
+真相依然是 ``m7.xml``：``tests/test_m7_robot.py`` 断言 yaml 里每一行等于对应关节的
+``range``，所以改 MJCF 忘了改 yaml 会红，而不是悄悄用旧限位跑。
+
 ## 链根/末端的名字不在这里写死
 
 它们已经在 ``config.CONFIG`` 里了（``torso_body`` / ``wrist_body``，碰撞代理和
@@ -30,6 +37,9 @@ MuJoCo env 都从那儿取）。同一个 body 名在仓库里存两份，改 MJ
 不抛异常。所以这里直接引用，不复制。
 """
 from web2robot.robots.m7.config import CONFIG as _CONFIG
+from web2robot.robots.params import robot_params as _robot_params
+
+_P = _robot_params("m7")
 
 #: 串链根 body 名（两条手臂共用），来自 ``config.CONFIG["torso_body"]``。
 ROOT_LINK_NAME = _CONFIG["torso_body"]
@@ -40,26 +50,15 @@ ROOT_LINK_NAME = _CONFIG["torso_body"]
 END_LINK_NAME = dict(_CONFIG["wrist_body"])
 
 #: (7, 2) 的关节限位，单位 rad，顺序见模块 docstring。纯 list，不是 tensor。
+#: 数值来自 ``configs/robots/m7.yaml`` 的 ``ik.joint_limits``（唯一来源）。
 JOINT_LIMITS = {
-    "left": [
-        [-2.79,  2.79],   # shoulder_pitch
-        [-0.56,  2.53],   # shoulder_roll   ← 左右镜像
-        [-4.36,  1.22],   # arm_yaw         ← 左右镜像
-        [-2.36,  0.70],   # elbow_pitch
-        [-2.79,  2.79],   # elbow_yaw
-        [-0.79,  0.79],   # wrist_pitch
-        [-1.57,  1.57],   # wrist_roll
-    ],
-    "right": [
-        [-2.79,  2.79],   # shoulder_pitch
-        [-2.53,  0.56],   # shoulder_roll   ← 左右镜像
-        [-1.22,  4.36],   # arm_yaw         ← 左右镜像
-        [-2.36,  0.70],   # elbow_pitch
-        [-2.79,  2.79],   # elbow_yaw
-        [-0.79,  0.79],   # wrist_pitch
-        [-1.57,  1.57],   # wrist_roll
-    ],
+    side: [[float(lo), float(hi)] for lo, hi in _P["ik"]["joint_limits"][side]]
+    for side in ("left", "right")
 }
+
+#: yaml 里记的关节顺序，和模块 docstring 那一串一致（``tests/test_robot_params_yaml.py``
+#: 断言两侧限位都是 7 行、和这个顺序等长）。
+JOINT_ORDER = tuple(_P["ik"]["joint_limits"]["order"])
 
 
 def ik_spec(side: str) -> dict:
@@ -78,4 +77,5 @@ def ik_spec(side: str) -> dict:
     }
 
 
-__all__ = ["ROOT_LINK_NAME", "END_LINK_NAME", "JOINT_LIMITS", "ik_spec"]
+__all__ = ["ROOT_LINK_NAME", "END_LINK_NAME", "JOINT_LIMITS", "JOINT_ORDER",
+           "ik_spec"]

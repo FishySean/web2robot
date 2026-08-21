@@ -1,0 +1,147 @@
+# M7 的可调参数。**仓库里这些数字只有这一份**，代码从这里读（src/web2robot/robots/params.py）。
+#
+# 格式参考 HandUMI（robonet-ai.github.io/handumi-sw）的机器人配置：一台机器人一个
+# yaml，装 IK 权重 / 关节限位 / 静息姿态，外加 verified 标志位。**只借格式，不借数值。**
+#
+# verified: true  = 拿我们自己的数据标定/量出来的，改它要重新标定
+# verified: false = 没专门用数据验证过（手调或从资产里抄出来的）。**不等于"这个数错了"**,
+#                   只是"别把它当结论引用"。
+# source          = 这个数从哪来
+# pinned_by       = 哪个测试钉住它（有 pinned_by 的，改了 yaml 不改来源会红）
+#
+# 刻意不在这里的：body 名字/骨骼链/指尖列表（结构事实，唯一真相是 MJCF）、
+# 根位姿模型的训练超参（sample_config.py）、路径（configs/paths.yaml）。
+# 判断线：标定脚本能扫的量（= 构造参数）进 yaml，结构事实留在代码里挨着模型。
+
+robot: m7
+description: 双臂 7-DoF + 双手，上肢与 L3.4 逐位同构（但两份 yaml 不共用，见 l3_4.yaml）
+
+ik:
+  # web2robot/robots/m7/ik_config.py::JOINT_LIMITS
+  joint_limits:
+    verified: false
+    source: >-
+      从 assets/m7/m7.xml 每个关节的 range 抄出来的，不是标定值。MJCF 是唯一真相，
+      这里只是给不方便解析 MJCF 的地方（上游 RobotIKConfig 要 torch.tensor）一份可读副本。
+    pinned_by: tests/test_m7_robot.py（逐行断言这张表等于 m7.xml 里那个关节的 range）
+    unit: rad
+    order: [shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch, elbow_yaw, wrist_pitch, wrist_roll]
+    # 左右不是简单镜像：只有 shoulder_roll 和 arm_yaw 的区间镜像（外展方向相反）。
+    left:
+      - [-2.79, 2.79]     # shoulder_pitch
+      - [-0.56, 2.53]     # shoulder_roll   ← 左右镜像
+      - [-4.36, 1.22]     # arm_yaw         ← 左右镜像
+      - [-2.36, 0.70]     # elbow_pitch
+      - [-2.79, 2.79]     # elbow_yaw
+      - [-0.79, 0.79]     # wrist_pitch
+      - [-1.57, 1.57]     # wrist_roll
+    right:
+      - [-2.79, 2.79]     # shoulder_pitch
+      - [-2.53, 0.56]     # shoulder_roll   ← 左右镜像
+      - [-1.22, 4.36]     # arm_yaw         ← 左右镜像
+      - [-2.36, 0.70]     # elbow_pitch
+      - [-2.79, 2.79]     # elbow_yaw
+      - [-0.79, 0.79]     # wrist_pitch
+      - [-1.57, 1.57]     # wrist_roll
+
+  # web2robot/robots/m7/config.py::CONFIG["start_config"] / ["home_config"]
+  # 同时是三个东西：MuJoCo env 的初始姿态、IK 的种子、坏帧兜底渐入的静息位
+  # （retarget/fallback.py::apply_rest_fallback）。
+  start_config:
+    verified: false
+    source: >-
+      手挑的：肘弯 -1.0 rad、肩微外展 ±0.20 rad，看起来像个自然垂手。没做过
+      "换个种子 IK 收敛更好吗" 的对比实验，也没做过"渐入这个姿态最不突兀吗"的对比。
+    unit: rad
+    order: [shoulder_pitch, shoulder_roll, arm_yaw, elbow_pitch, elbow_yaw, wrist_pitch, wrist_roll]
+    left:  [0.0,  0.20, 0.0, -1.0, 0.0, 0.0, 0.0]
+    right: [0.0, -0.20, 0.0, -1.0, 0.0, 0.0, 0.0]
+
+collision:
+  # 躯干网格在 waist_pitch_link 上的 AABB 半长。标定盒是按它的比例表达的，
+  # 所以它是参考量而不是可调参数 —— 但它确实是量出来的。
+  # web2robot/collision/presets.py::MESH_HALF
+  mesh_aabb_half:
+    verified: true
+    source: >-
+      量自 assets/m7 的躯干网格（scripts/dev/sweep_arm_torso_params.py 标定时的分母：
+      grid 那组 torso_half = [0.50, 0.70, 1.00] × 这个）。
+    pinned_by: tests/test_module_boundaries.py（断言 GRID.torso_half 逐轴 ≤ 这个）
+    unit: m
+    value: [0.139, 0.170, 0.239]
+
+  # web2robot/collision/capsule_collision.py::M7CapsuleModel 的类属性默认值
+  proxy:
+    verified: false
+    source: >-
+      手缩出来的（从 mesh_aabb_half 往里收了一点，为了给推出留隐含余量），没做过
+      proxy-vs-真实网格的比对。**A1 那次标定没有改它**：标定出来的盒只在 grid 路线的
+      预设里覆盖（见 arm_torso.routes.grid），类属性保持原值是为了 neural 路线逐字节不变。
+      tip_radius 是拍的指尖球半径，也没量过。
+    unit: m
+    torso_half: [0.105, 0.135, 0.215]
+    tip_radius: 0.012
+
+  # web2robot/collision/arm_torso_filter.py::ArmTorsoFilter.__init__ 的默认值
+  arm_torso:
+    defaults:
+      verified: false
+      source: >-
+        手调的初版参数。**不能动**：neural 路线上已经发表的 13 段表、demo 视频、
+        README 素材全是这套跑出来的，改一个数那些数字就全部失效。
+      pinned_by: >-
+        tests/test_module_boundaries.py（enter_thresh == 0.04、include_fingers is True
+        是按构造签名钉的）+ scripts/dev/check_neural_bytes.sh（字节级）
+      enter_thresh: 0.04      # 只纠正比这个更深的骨段 [m]
+      w_pen: 20.0             # 推出权重（每米穿透）
+      w_ee: 60.0              # 保住 hand_frame 位置 [每 m^2]
+      w_prox: 1.0             # 别离原关节角太远 [每 rad^2]
+      w_temp: 0.5             # 别离上一纠正帧太远
+      max_iter: 60
+      lr: 0.03
+      fd_eps: 0.001           # = 1e-3；yaml 里必须写小数形式，PyYAML 会把 1e-3 读成字符串
+      include_fingers: true   # 指尖进躯干也算（B2）
+      smooth_sigma: 2.0       # 纠正帧的时序平滑 [帧]
+      margin: 0.0             # 要求纠正后留出的间隙 [m]
+
+    # 按根位姿路线分开覆盖。为什么要分：grid 把底座往手边吸，手臂贴躯干的角度和频率
+    # 都和 neural 不一样（13 段实测：穿躯帧 23.8% vs 28.9%），一套余量伺候不了两条路线。
+    routes:
+      neural:
+        verified: false
+        source: >-
+          **刻意是空的** —— 走 neural 就等于按上面 defaults 原样构造。空集本身谈不上
+          "标定过"，所以标 false；但"空集 = 旧行为逐字节不变"这件事是
+          scripts/dev/check_neural_bytes.sh 用 md5 验过的。
+        pinned_by: tests/test_module_boundaries.py（断言 arm_torso_preset('neural') == {}）
+      grid:
+        verified: true
+        source: >-
+          scripts/dev/sweep_arm_torso_params.py 2026-08-20 标定，判据是 MuJoCo 真实网格
+          接触（542 帧 / 3 段：fill_jar、sip_coffee、-2cNMO9Mm3Q_192.4_209.2），样本内
+          漏 0 误 0、AUC 1.0000；样本外 13 段残留穿透 28.9% → 13.3%。
+          盒缩小后零点才等于"真接触"，推出间隙因此必须从 enter_thresh 里拆出来单列
+          （margin）。已知盲区（浅于约 1.7 cm 的真穿透看不见）和不再往这个方向调的理由
+          见 collision/presets.py 的 docstring 与 docs/VERIFICATION.md、BACKLOG A1。
+        torso_half: [0.0695, 0.119, 0.239]   # = [0.50, 0.70, 1.00] × mesh_aabb_half
+        enter_thresh: 0.02
+        margin: 0.02
+
+  # web2robot/collision/dual_hand_filter.py::DualHandFilter.__init__ 的默认值
+  dual_hand:
+    defaults:
+      verified: false
+      source: >-
+        直接沿用 arm_torso 的一套权重/迭代数（B4）。enter_thresh 4cm 在这里是**刻意保守**：
+        双手抓握本来就该靠得很近，门槛松一点宁可漏修也别把正常的双手协作掰开。
+        没有针对双手做过标定 —— 没有"双手互穿"的真值可比（B4 复验的是手内自戳，结论是不存在）。
+      pinned_by: tests/test_module_boundaries.py（enter_thresh == 0.04）
+      enter_thresh: 0.04
+      w_pen: 20.0
+      w_ee: 60.0
+      w_prox: 1.0
+      w_temp: 0.5
+      max_iter: 60
+      lr: 0.03
+      fd_eps: 0.001
+      smooth_sigma: 2.0

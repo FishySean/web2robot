@@ -62,23 +62,36 @@ problem — but it means the box cannot be pushed further in this direction.  Th
 fix is to decouple detection from the push-out target (detect with a
 mesh-sized box, push out to the calibrated one), not to re-tune the triple.
 See `docs/VERIFICATION.md` and BACKLOG A1.
+
+Where the numbers live
+----------------------
+2026-08-21: the tables below are read from `configs/robots/m7.yaml`
+(`collision.mesh_aabb_half`, `collision.arm_torso.routes`) instead of being
+written here.  Same numbers, one home — and the yaml carries the `verified` flag
+that this docstring's prose implies: `grid` is `verified: true` (the sweep above),
+`NEURAL` is not (an empty override set is not a calibration; its byte-level
+guarantee is `scripts/dev/check_neural_bytes.sh`, not a measurement of numbers).
 """
 
 from __future__ import annotations
 
+from web2robot.robots.params import robot_params as _robot_params, values as _values
+
+_C = _robot_params("m7")["collision"]
+
 # The trunk mesh AABB half-extents on waist_pitch_link, for reference: the
 # calibrated box below is expressed as fractions of these.
-MESH_HALF = (0.139, 0.170, 0.239)
+MESH_HALF = tuple(_C["mesh_aabb_half"]["value"])
 
 #: `neural` = today's behaviour, unchanged. Empty by design — see module docstring.
-NEURAL: dict = {}
+NEURAL: dict = _values(_C["arm_torso"]["routes"]["neural"])
 
 #: `grid` = calibrated 2026-08-20 (see module docstring for the material).
-GRID: dict = {
-    "torso_half": (0.0695, 0.119, 0.239),   # 0.50 / 0.70 / 1.00 x MESH_HALF
-    "enter_thresh": 0.02,                   # correct once deeper than (enter-margin)
-    "margin": 0.02,                         # ... and push out to this clearance
-}
+GRID: dict = _values(_C["arm_torso"]["routes"]["grid"])
+# Tuple, not the yaml's list: callers pass this straight into
+# `M7CapsuleModel(torso_half=...)` and a tuple cannot be mutated in place by one
+# caller behind another's back.
+GRID["torso_half"] = tuple(GRID["torso_half"])
 
 _BY_ROUTE = {"neural": NEURAL, "grid": GRID}
 
