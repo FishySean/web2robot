@@ -262,6 +262,50 @@ scripts/dev/m7_tool.sh peek_penetration_frames.py \
 13.16 cm 那档（`--oo8_XIuOM_900.3` f17）**一眼就是坏的** —— 整条左小臂埋进躯干，
 指尖从胸口另一侧戳出来。所以这一列必须和深度一起看。
 
+### 默认 `--root_solver` 定为 `grid`（2026-08-21，人拍板）
+
+碰撞过滤参数按路线分开标定之后，13 段官方片段上两条路线的账（数字出自上面
+`outputs/dev/collcal_ab_table/` 那张表和 `scripts/dev/collcmp_table.py` 的产物）：
+
+| | IK 可行率（段均） | 残留穿躯帧占比 | 有残留的段数 | ρ̄（参照 Ego2Robot 的 0.65） |
+|---|---|---|---|---|
+| `neural` | 87.1% | 23.8% | 11/13 | 0.441 |
+| `grid` | **96.7%** | **13.3%** | **9/13** | 0.393 |
+
+标定之前 grid 是"可行率赢、穿模输"（28.9% vs 23.8%），标定之后两项都赢，
+唯一还输的是 ρ̄ 更偏离 0.65。**取默认的理由是这两件事不等价**：ρ̄ 偏低是"姿态不够
+拟人"（论文里要讨论的量，但数据还能用），穿模是"这一帧直接不能用"。
+
+**为什么改这个默认值不会让前面几节的字节比对失效** —— 四个守卫脚本
+（`check_neural_bytes.sh:20` / `check_m7_unchanged_by_l3_4.sh:33` /
+`check_object_tracking_bytes.sh:14` / `check_action_refine_bytes.sh:17`）**都显式传
+`--root_solver neural`**，比的一直是同一条路线；显式选 `neural` 时行为逐字节不变。
+反过来这是一条约束：以后新写的字节比对脚本也必须显式传这个参数，别靠默认值。
+
+**别把 grid 说成"不用 checkpoint"** —— 它不用模型出根位姿（training-free），但
+`test.py` 是无条件 `_load_model` 的，IK 求解器（`opt.ik_left/right`）挂在那个对象上，
+所以裸跑 grid 仍然要 `--ckpt`。README 和 patch 帮助文本都按这个口径写。
+
+**改完实跑过一遍，验的是"默认值真的接通了"**（2026-08-21，`-QALmP1nHtM_678.2_682.2`，
+M7 / seed 0 / 两条碰撞过滤都开，命令里**一个 `--root_solver` 都没传**，
+日志 `outputs/dev/b2_default_smoke.log`）：
+
+```
+K=31/63 帧（convex_hull）  质心=[-0.005, 0.084, 1.198]  r_max=1.007
+最优: ik_rate=100.0%  t=[0.145, 0.184, 1.448]  （实打 210912/423612，同分 292）
+IK L: 63/63 (100.0%)  R: 63/63 (100.0%)  overall: 100.0%
+[ArmTorsoFilter] enter_thresh=0.020m margin=0.020m ... torso_half=[0.0695, 0.119, 0.239]
+```
+
+两件事同时被这一跑证实：① 走的是网格搜索（有 K / 候选 / 同分那三行，neural 那条不打这些）；
+② `--atf_preset auto` 跟着新默认值走到了 **grid 那组标定参数**（`0.0695/0.119/0.239` +
+两个 0.020，正是 `presets.GRID`），不是过滤器自己的未标定默认值 —— 这两个默认值是联动的，
+只改一个会得到"grid 路线配 neural 参数"的组合，所以必须一起验。
+
+受影响的已有素材：README 里 `demo_fill_jar.gif` 是默认值还是 `neural` 时生成的
+（可行率 64% 那段），照 README 快速上手那条命令重跑现在走 grid，画面会不一样；
+要复现那张图得显式加 `--root_solver neural`。
+
 ### README 里那两张图：怎么重出、图里的数从哪来
 
 图进 git（`docs/assets/`），所以它比别的产物更容易过期 —— 代码改了、图没重出，

@@ -123,7 +123,7 @@ index 2d8dc8c..c18a481 100644
      def xlerobot(side: str) -> "RobotIKConfig":
          """XLeRobot 5-DoF SO-ARM100 arm (Rotation/Pitch/Elbow/Wrist_Pitch/Wrist_Roll)."""
 diff --git a/retarget/scripts/test.py b/retarget/scripts/test.py
-index f8f1b5f..9b4927f 100644
+index f8f1b5f..29d0674 100644
 --- a/retarget/scripts/test.py
 +++ b/retarget/scripts/test.py
 @@ -126,10 +126,26 @@ def _preview_trajectory(env_vis, q_left, q_right, Q_lf, Q_rf, finger_jnames,
@@ -472,20 +472,30 @@ index f8f1b5f..9b4927f 100644
      p.add_argument("--torso_alpha",        type=float, default=0.3,
                     help="Translation blend weight between the global anchor "
                          "(0) and the per-window estimate (1). Lower values "
-@@ -460,6 +665,42 @@ def _parse() -> argparse.Namespace:
+@@ -460,6 +665,52 @@ def _parse() -> argparse.Namespace:
                          "per-frame root trajectory after interpolation. "
                          "Set to 0 to disable.")
  
 +    # ── 根位姿求解器：两种粒度，可切换（我方新增） ─────────────────────────────
 +    # neural = 上面那一串（逐帧生成模型 + best-of-N 锚点 + 混合 + 插值 + 平滑）
 +    # grid   = Qwen-RobotManip 公式 (3)：网格搜索一个**静态**底座位姿，使覆盖轨迹
-+    #          空间极值的关键帧上 IK 可行率最大。不需要 checkpoint 出根位姿。
++    #          空间极值的关键帧上 IK 可行率最大。不需要 checkpoint 出根位姿
++    #          （但 test.py 仍无条件 _load_model 拿 opt.ik_left/right，所以 --ckpt 还是要给）。
 +    # 策略全在 web2robot/retarget/root_grid.py，这里只有参数接线。
-+    p.add_argument("--root_solver", choices=("neural", "grid"), default="neural",
-+                   help="Root-pose solver. 'neural' = per-frame generative "
-+                        "estimator (default, original behaviour). 'grid' = "
++    #
++    # 默认值 2026-08-21 从 neural 改成 grid（人拍的板，依据是官方 13 段 A/B，
++    # 碰撞过滤参数按路线分开标定之后 —— 见 web2robot 的 docs/VERIFICATION.md）：
++    #   grid   IK 可行率 96.7%，残留穿躯帧 13.3%，有残留 9/13 段，ρ̄ 0.393
++    #   neural            87.1%              23.8%            11/13        0.441
++    # grid 唯一输的是 ρ̄ 更偏离 Ego2Robot 的 0.65（底座更贴手、手臂折得更多，
++    # 属于"姿态不够拟人"）；穿模是"数据直接不能用"，所以按后者取默认。
++    # 显式 --root_solver neural 的行为**逐字节不变**（三个字节比对守卫都显式传这个参数）。
++    p.add_argument("--root_solver", choices=("neural", "grid"), default="grid",
++                   help="Root-pose solver. 'grid' (default since 2026-08-21) = "
 +                        "static grid search maximising keyframe IK feasibility "
-+                        "(Qwen-RobotManip eq. 3); training-free.")
++                        "(Qwen-RobotManip eq. 3); training-free. 'neural' = "
++                        "per-frame generative estimator, i.e. the original "
++                        "upstream behaviour.")
 +    p.add_argument("--grid_spacing",   type=float, default=0.05, metavar="M",
 +                   help="[--root_solver grid] Candidate grid spacing in metres.")
 +    p.add_argument("--grid_yaws",      type=int,   default=12,
@@ -515,7 +525,7 @@ index f8f1b5f..9b4927f 100644
      # ── IK / post-processing ──────────────────────────────────────────────────
      p.add_argument("--tol_pos",       type=float, default=0.01,
                     metavar="M",
-@@ -471,6 +712,103 @@ def _parse() -> argparse.Namespace:
+@@ -471,6 +722,103 @@ def _parse() -> argparse.Namespace:
      p.add_argument("--self_collision", action="store_true",
                     help="Run gradient-based self-collision post-processing "
                          "(CollisionFilter) on the final joint trajectory.")

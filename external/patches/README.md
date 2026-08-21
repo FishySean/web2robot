@@ -14,15 +14,15 @@ numpy / mujoco / scipy，**零上游 import**；`test.py` 那 +190 行的 diff �
 
 ## egoinfinity-modified.patch
 
-2026-08-20 加第二台机器人 L3.4（`--robot l3_4`）之后重新导出，覆盖 6 个
-被改过的**已跟踪**文件（6 files changed, 520 insertions(+), 32 deletions(-)，45256 字节）。
+2026-08-21 把 `--root_solver` 的默认值改成 `grid` 之后重新导出，覆盖 6 个
+被改过的**已跟踪**文件（6 files changed, 530 insertions(+), 32 deletions(-)，46139 字节）。
 
-**这一版数字是往上走的，原因见下面 2026-08-18 起的五节** ——
-上一版 459
+**这一版数字是往上走的，原因见下面 2026-08-18 起的六节** ——
+上一版 520
 insertions。一般来说 patch 变大就是有人在往上游文件里写实质逻辑，所以每次变大都必须在
-这里写清楚多出来的是什么；这五次多的分别是一个 if/else 开关＋把新求解器包成 callable 的
-接线、两个默认关闭的开关、一处"去 `presets.py` 查表 + 允许 CLI 覆盖"的接线、和一台新机器人
-在注册表/IK/手部重定向器三处的注册，肉仍然在
+这里写清楚多出来的是什么；这六次多的分别是一个 if/else 开关＋把新求解器包成 callable 的
+接线、两个默认关闭的开关、一处"去 `presets.py` 查表 + 允许 CLI 覆盖"的接线、一台新机器人
+在注册表/IK/手部重定向器三处的注册、和一次默认值翻转（10 行全是注释，零新代码），肉仍然在
 `src/web2robot/retarget/root_grid.py`、`src/web2robot/twin/`、`src/web2robot/refine/`、
 `src/web2robot/collision/presets.py` 和 `src/web2robot/robots/l3_4/`。
 
@@ -298,3 +298,27 @@ import 时报，而是跑到建 IK 串链那一步才 `AttributeError`。同理*
 
 校验照旧：`git show HEAD:<file>` 铺进 `/tmp/replay_l34` → replay 这个 patch → 和真实工作区
 逐字节 md5 比对，**6/6 完全一致**（2026-08-20，45256 字节）。
+
+### 2026-08-21 `--root_solver` 默认值改成 `grid`：520 → 530，多出来的 10 行全是注释
+
+**这一版没有一行新代码** —— 唯一的实质改动是 argparse 里一个字符串
+（`default="neural"` → `default="grid"`），多出来的 10 行是帮助文本重写 + 一段
+把依据写在旁边的中文注释（13 段 A/B 的四个数字、为什么按穿模而不是按 ρ̄ 取默认）。
+数字本身在 `docs/VERIFICATION.md`，这里只留结论，免得读上游文件的人以为默认值是随手定的。
+
+拍板依据（碰撞过滤参数按路线分开标定**之后**的 13 段官方片段）：
+`grid` 可行率 96.7% / 残留穿躯 13.3% / ρ̄ 0.393，`neural` 87.1% / 23.8% / 0.441。
+grid 唯一输的是 ρ̄ 更偏离 Ego2Robot 的 0.65。
+
+**改默认值不会让前面几节的字节比对失效**：四个守卫脚本
+（`check_neural_bytes.sh` / `check_m7_unchanged_by_l3_4.sh` /
+`check_object_tracking_bytes.sh` / `check_action_refine_bytes.sh`）**都显式传
+`--root_solver neural`**，所以它们比的一直是同一条路线；显式选 `neural` 的行为
+逐字节不变。反过来说，以后写新的字节比对脚本也必须显式传这个参数，别再依赖默认值。
+
+一个容易被过度宣传的点：grid 不用模型出根位姿，但 `test.py` 是**无条件** `_load_model`
+的，IK 求解器（`opt.ik_left/right`）挂在那个对象上，所以**裸跑 grid 仍然要 `--ckpt`**。
+帮助文本里写的是 "training-free"（不需要训根位姿模型），不是 "checkpoint-free"。
+
+校验照旧：`git archive HEAD` 铺进临时目录 → replay 这个 patch → 和真实工作区逐字节
+md5 比对，**6/6 完全一致**（2026-08-21，46139 字节）。
