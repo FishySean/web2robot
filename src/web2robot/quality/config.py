@@ -10,6 +10,19 @@ Do not silently promote a [GUESS] to fact. If you tune one, say what data moved 
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+# ---------------------------------------------------------------------------
+# 两个模块开关（2026-08-21 方向调整）
+#
+# 公司内部已经有现成的质检评估体系，这两个模块从"必须要走的第一步"降级成
+# "可选、可随时跳过"。开关的取值集合只写在这里一处，argparse 的 choices 和
+# 单测都引用它，不允许第二份清单。
+#
+# 为什么没有 ``external``：现在没有对接对象。等真要接公司系统时再加一档，
+# 那时候才知道它要读什么格式的判决。先留一个名字反而会有人去实现它。
+# ---------------------------------------------------------------------------
+GATE_MODES = ("builtin", "skip")
+ROUTING_MODES = ("builtin", "skip")
+
 
 @dataclass
 class QCConfig:
@@ -202,6 +215,26 @@ class QCConfig:
     """Skip the appearance/motion stages when the pose gate already rejects.
     Set False for calibration runs, where you want every signal on every clip
     (see README 'compute-all vs early-exit')."""
+
+    # ---------- 模块开关 ----------
+    quality_gate: str = "builtin"
+    """``builtin`` 走本模块的三档判定；``skip`` 一个 stage 都不跑，片段原样
+    往下传（判决写 ``skipped``，不是 ``accept`` —— ``accept`` 会断言一次
+    根本没做的测量）。取值见 GATE_MODES。"""
+
+    routing: str = "builtin"
+    """``builtin`` 照旧算 suggested_route；``skip`` 只是不调
+    ``routing.labels.suggest``，质检的每个 stage 照样跑（两个开关是独立的，
+    公司可能只替换其中一个）。取值见 ROUTING_MODES。"""
+
+    def __post_init__(self):
+        # 唯一的校验点：CLI 有 argparse choices 兜着，直接构造 QCConfig 的调用
+        # 方（单测、脚本、以后接公司系统的胶水）没有，写错了要在这里就炸，而不是
+        # 悄悄按 builtin 跑完再让人以为跳过了。
+        if self.quality_gate not in GATE_MODES:
+            raise ValueError(f"quality_gate={self.quality_gate!r} 不在 {GATE_MODES}")
+        if self.routing not in ROUTING_MODES:
+            raise ValueError(f"routing={self.routing!r} 不在 {ROUTING_MODES}")
 
     def to_dict(self):
         return asdict(self)

@@ -19,6 +19,7 @@ envs/rt_env/bin/python -m unittest discover -s tests -v     # 秒级，全套 17
 | 改了什么 | 判据 | 为什么是这个判据 |
 |---|---|---|
 | ①质检 / ②路由 | **判决字段逐字一致** + 每个信号没越阈 | GPU 上的 KeypointRCNN 不是逐位确定的 |
+| 质检/路由整档跳过 | builtin 档同上，**skip 档要求逐字节相同** | skip 不加载任何模型，那一档是纯确定的 |
 | ③感知前端 | 单测（注入假 callable）+ 冻结值比对 | 前端要 GPU，但算术部分可以纯 numpy 测 |
 | ④重定向 | 隔离对比逐位一致 + 固定 seed 的端到端 | 根锚点有随机源，不固定 seed 无法比 |
 | ⑤碰撞 / 轨迹 | **逐位相同** | 纯 CPU 有限差分，没有随机源 |
@@ -44,6 +45,53 @@ envs/rt_env/bin/python scripts/dev/diff_quality_run.py /tmp/re/qc.jsonl
 信号都没有越过它的阈值**（后者能抓到"判决碰巧没变但信号已经贴着阈值了"）。
 
 再看一眼 contact sheet（`--viz`）确认画面。
+
+### 整档跳过的开关（`--quality_gate` / `--routing`，2026-08-21）
+
+公司内部已有质检评估体系，这两步从"必须"降级为"可选"。两个开关**各自独立**
+（`builtin|skip`，默认 `builtin`），因为将来可能只换掉其中一个。
+
+```bash
+# 1. 单测：21 个用例，0.14s
+envs/rt_env/bin/python -m unittest tests.test_quality_switch -v
+
+# 2. 端到端五遍对比（base / 显式默认值 / --routing skip / skip ×2，约 80 秒）
+bash scripts/dev/check_quality_switch_bytes.sh > outputs/dev/quality_switch_bytecheck.log 2>&1
+```
+
+**判据为什么在这里是分裂的**：builtin 档要跑 KeypointRCNN，逐字节比 md5 本身就不成立
+（上一节那个 1/58 一帧翻转；`qc.md` 里还写了 wall time）。所以 builtin 档判
+`diff_quality_run.py`，**skip 档反过来要求逐字节相同** —— 它一个模型都不加载，
+是纯确定的，那一档如果不逐位相同就说明有隐藏状态。
+
+2026-08-21 实测四条（10 段：`data/videos/` 7 段 + 3 个回归对照）：
+
+1. **`base`（一个新参数都不传）对 2026-08-05 回归基准**：判决字段 11 项 × 10 段
+   **全部一致**，12 条参与判决的信号**没有一条换边**，20 处数值漂移（最大 6.32%，
+   是 `hand_lapvar_med`）。
+2. **`bi`（显式写 `--quality_gate builtin --routing builtin`）对 `base`**：数值漂移
+   **0 处**，md5 都相同（同为 `e05741199a48c1172425650fe02b42ff`）—— 加开关没改默认档。
+3. **`--routing skip` 对 `base`**：全 10 段**只有 `suggested_route` / `route_rationale`
+   两项变**，`verdict` / `reasons` / `signals` / `stages_run` 一字不变，路线全成 `None`，
+   每段的 `route_rationale` 里都写明是"关了路由"而不是"判不出来"。
+4. **`--quality_gate skip`**：两遍 jsonl 逐字节相同
+   （`f4228bc484f0b195bd29d0cd5d988ed5`），判决集合 `['skipped']`、跑过的 stage `[]`、
+   日志里 `hand detector on` 出现 **0** 次（base 那遍 1 次），耗时 **0.0s**（base 39.8s）。
+
+**两处设计选择，都是被实测逼出来的，不是想出来的：**
+
+- **skip 写 `skipped` 而不是 `accept`。** `accept` 是在断言一次没发生过的测量；
+  谁拿 `qc.jsonl` 算通过率，都会把没量过的片段算进分母。
+- **`routing=skip` 不写 reason 码。** 第一版给 `reasons` 前面插了个
+  `routing_skipped`，跑出来是 `['routing_skipped', 'no_person']` —— 9/10 段的真实
+  理由被挤到第二位，直接违反 `reasons` 那句"没通过的检查、最决定性的在前"的契约。
+  改成信息只落在 `suggested_route` / `route_rationale`，并加了两个单测钉住
+  （`test_routing_skip_is_not_a_reason_code` 连源码里出现 `add_reason("routing_skipped")`
+  都算不过）。这次是判据抓住了代码，不是代码逼弯了判据。
+
+暂时**没有** `external` 这一档：现在没有对接对象，不知道公司系统的判决是什么格式，
+先占个名字会有人去实现它。`test_no_external_mode_yet` 将来会因此变红 —— 那是提醒不是
+故障，记在 [`BACKLOG.md`](BACKLOG.md) C22。
 
 ## ③感知前端（`src/web2robot/perception/`）
 

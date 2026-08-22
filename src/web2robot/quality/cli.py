@@ -10,7 +10,7 @@ import os
 import sys
 import time
 
-from .config import QCConfig
+from .config import QCConfig, GATE_MODES, ROUTING_MODES
 from .pipeline import diagnose_many
 from .schema import Verdict
 
@@ -78,7 +78,8 @@ def expand(inputs, dedup_content: bool = True):
 
 def write_markdown(reps, path, cfg, elapsed, dupes=None):
     order = {Verdict.ACCEPT.value: 0, Verdict.TRIM.value: 1, Verdict.DEFER.value: 2,
-             Verdict.UNKNOWN.value: 3, Verdict.REJECT.value: 4}
+             Verdict.UNKNOWN.value: 3, Verdict.REJECT.value: 4,
+             Verdict.SKIPPED.value: 5}
     reps = sorted(reps, key=lambda r: (order.get(r.verdict, 9), r.clip_id))
     n = len(reps)
     counts = {}
@@ -91,6 +92,13 @@ def write_markdown(reps, path, cfg, elapsed, dupes=None):
          "", "> DEFER is not a rejection: hands-only framing cannot be separated "
          "from egocentric footage by body pose alone, and first-person video is a "
          "valid route in step 2.", ""]
+    if cfg.quality_gate == "skip":
+        L += ["> **`--quality_gate skip`：这份报告没有任何测量。** 判决一律 "
+              "`skipped`（不是 `accept` —— 没量过的东西不能算通过），下面的 "
+              "framing / hand 明细表是空的。", ""]
+    elif cfg.routing == "skip":
+        L += ["> **`--routing skip`：质检照旧全跑，但没有算建议路线。** "
+              "`route` 一列全是 `-`，signals 里的信号一条不少。", ""]
     if dupes:
         L += ["## Duplicates dropped", "",
               "Byte-identical re-uploads under different names. Reported rather "
@@ -188,9 +196,18 @@ def main(argv=None):
     ap.add_argument("--per-frame", action="store_true", help="keep per-frame rows in JSONL")
     ap.add_argument("--viz", default=None, metavar="DIR",
                     help="write annotated evidence frames + a contact sheet here")
+    # 下划线写法是主入口（retarget 那边的 CLI 全是下划线），连字符留成别名，
+    # 因为本文件其余的选项都是连字符，两种都能敲比让人猜要好。
+    ap.add_argument("--quality_gate", "--quality-gate", dest="quality_gate",
+                    default="builtin", choices=list(GATE_MODES),
+                    help="builtin=走本模块的三档判定（默认，行为不变）；"
+                         "skip=一个 stage 都不跑，片段原样往下传")
+    ap.add_argument("--routing", default="builtin", choices=list(ROUTING_MODES),
+                    help="builtin=照旧给出 suggested_route（默认）；"
+                         "skip=不算路由标签，质检信号照样全跑")
     a = ap.parse_args(argv)
 
-    cfg = QCConfig()
+    cfg = QCConfig(quality_gate=a.quality_gate, routing=a.routing)
     if a.n_frames:
         cfg.n_frames = a.n_frames
     if a.hand_weights:
@@ -210,18 +227,25 @@ def main(argv=None):
     # Say out loud whether the hand detector loaded. Without it the hands-only
     # boundary is unmeasurable and every such clip comes out UNKNOWN -- that must
     # be visible up front, not inferred afterwards from a wall of 'unknown'.
-    from . import hand_gate
-    hm, hdev = hand_gate.get_hand_model(cfg.hand_weights, cfg.device)
-    if hm is None:
-        print("[quality] WARNING hand detector unavailable "
-              f"(weights={hand_gate.find_weights(cfg.hand_weights)}) -- "
-              "hands-only clips will be reported UNKNOWN, not rejected",
-              file=sys.stderr)
+    # quality_gate=skip 时连模型都不加载：跳过就该是零 GPU、零权重依赖，否则
+    # "跳过"只省了推理时间，在没装权重的机器上照样报警。
+    if cfg.quality_gate == "skip":
+        print("[quality] --quality_gate skip：不跑任何 stage，"
+              f"{len(paths)} 段原样往下传（判决 skipped，不是 accept）", flush=True)
     else:
-        print(f"[quality] hand detector on {hdev}: "
-              f"{hand_gate.find_weights(cfg.hand_weights)}", flush=True)
+        from . import hand_gate
+        hm, hdev = hand_gate.get_hand_model(cfg.hand_weights, cfg.device)
+        if hm is None:
+            print("[quality] WARNING hand detector unavailable "
+                  f"(weights={hand_gate.find_weights(cfg.hand_weights)}) -- "
+                  "hands-only clips will be reported UNKNOWN, not rejected",
+                  file=sys.stderr)
+        else:
+            print(f"[quality] hand detector on {hdev}: "
+                  f"{hand_gate.find_weights(cfg.hand_weights)}", flush=True)
     print(f"[quality] {len(paths)} clips, n_frames={cfg.n_frames}, "
-          f"early_exit={cfg.early_exit}", flush=True)
+          f"early_exit={cfg.early_exit}, quality_gate={cfg.quality_gate}, "
+          f"routing={cfg.routing}", flush=True)
 
     t0 = time.time()
 

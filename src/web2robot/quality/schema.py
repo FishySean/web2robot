@@ -21,6 +21,11 @@ class Verdict(str, Enum):
     DEFER = "defer"            # framing is hands-only: step 2 must classify the view
     REJECT = "reject"          # not usable by any known route
     UNKNOWN = "unknown"        # a required signal could not be computed -> human look
+    SKIPPED = "skipped"        # --quality_gate skip: 没有测量，所以没有判决
+    """``skipped`` 不是 ``accept``。跳过质检时片段原样往下传，效果上跟通过
+    一样，但 ``accept`` 是"量过了，可用"这个断言 —— 把没做的测量写成通过，
+    以后从 jsonl 统计通过率的人会把这些片段算进分母。这一档在下游必须当作
+    "未知，别人管"来读。"""
 
 
 @dataclass
@@ -108,4 +113,10 @@ REASONS = {
     "decode_error":     "video could not be opened or decoded",
     "span_conflict":    "the usable framing stretch straddles a shot cut -- "
                         "the two trim estimates disagree, look at it",
+    "quality_gate_skipped":
+                        "--quality_gate skip：一个 stage 都没跑，这段片段没有被"
+                        "质检过。不是通过，也不是不通过",
 }
+# 注意这里**没有** routing_skipped 这个码：reasons 的契约是"没通过的检查"，
+# 关掉路由不是一项检查没通过。那件事写在 route_rationale 里
+# （`suggested_route=None` + 一句 `routing=skip: ...`）。

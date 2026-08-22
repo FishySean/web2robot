@@ -26,8 +26,22 @@ Verdicts
 DEFER is not a pass. It is the honest statement that body framing alone cannot
 separate egocentric footage from an overhead third-person close-up, and that
 first-person clips must survive stage 1 because they are a valid step-2 route.
+
+两个开关（2026-08-21）
+--------------------
+``cfg.quality_gate`` / ``cfg.routing``，取值见 ``config.GATE_MODES`` /
+``ROUTING_MODES``，默认都是 ``builtin`` = 上面描述的现状。``skip`` 只是不做，
+不改任何一条判定规则：
+
+  quality_gate=skip  一个 stage 都不跑（连 ffprobe 都不开），判决 ``skipped``，
+                     片段原样往下传。routing 也就无从可算 —— 它的三个输入
+                     (view_class / camera_motion / bg_texture) 全部没有测量。
+  routing=skip       质检照旧全跑，只是不调 ``labels.suggest``。signals 里的
+                     信号一条不少，下游要自己判还有料。
+
+两个开关独立：公司可能只替换其中一个。
 """
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import os
 
 from .config import QCConfig
@@ -35,6 +49,40 @@ from .schema import ClipReport, Verdict, ViewClass, CameraMotion
 from ..common import video_io
 from ..routing import labels
 from . import pose_gate, hand_gate, motion, appearance
+
+ALL_STAGES = ("hygiene", "pose_gate", "hand_gate", "shot_cuts",
+              "camera_motion", "texture", "blur")
+"""每个 stage 的名字，只用于 quality_gate=skip 时如实写出"哪些没跑"。
+顺序跟 diagnose_clip 里 stages_run.append 的顺序一致。"""
+
+
+def _skipped_report(rep: ClipReport, cfg: QCConfig) -> ClipReport:
+    """quality_gate=skip 的返回值：说清楚"什么都没做"，不假装任何结论。"""
+    rep.verdict = Verdict.SKIPPED.value
+    rep.add_reason("quality_gate_skipped")
+    rep.stages_skipped += list(ALL_STAGES)
+    # needs_human_review 保持 False：这不是"要人看一眼"，是"这一步整个交给别人"。
+    # usable_span 留空 = 不裁剪，下游拿整段（原样往下传的字面意思）。
+    rep.suggested_route = None
+    rep.route_rationale = [
+        "quality_gate=skip：路由的三个输入（view_class / camera_motion / "
+        "bg_texture）都没有测量，给不出建议路线"]
+    if cfg.routing == "skip":
+        rep.route_rationale.append("routing=skip：路由本身也关了")
+    return rep
+
+
+def _route(cfg: QCConfig, view_class: str, camera_motion: str,
+           bg_texture: str, duration_ok: bool) -> Tuple[Optional[str], List[str]]:
+    """路由开关的唯一落点。
+
+    ``labels.suggest`` 在本文件里只允许出现在这里 —— 之前有两个调用点（提前
+    退出那条和正常判决那条），开关必须两条都管住，漏一条就会出现"跳过了路由
+    但被拒的片段还是带着路线"这种自相矛盾的输出。单测钉住了这个唯一性。
+    """
+    if cfg.routing == "skip":
+        return None, ["routing=skip：没有计算建议路线（质检信号照样在 signals 里）"]
+    return labels.suggest(view_class, camera_motion, bg_texture, duration_ok)
 
 
 def diagnose_clip(path: str, cfg: Optional[QCConfig] = None,
@@ -49,6 +97,13 @@ def diagnose_clip(path: str, cfg: Optional[QCConfig] = None,
     cfg = cfg or QCConfig()
     rep = ClipReport(clip_id=clip_id or os.path.basename(path),
                      path=os.path.abspath(path), source=source)
+
+    if cfg.quality_gate == "skip":
+        return _skipped_report(rep, cfg)
+    # routing=skip 故意**不往 reasons 里写标记**：reasons 的契约是"所有没通过的
+    # 检查，最要紧的在前"，塞一条记账用的码进去会把真正的原因挤到第二位（实测
+    # 过一版：`['routing_skipped', 'no_person']`，报告里第一眼看到的是无关的那条）。
+    # 关了路由这件事写在 route_rationale 里 —— 路由的解释本来就该在那儿。
 
     # ---------------- stage 0: hygiene ----------------
     info = video_io.probe(path)
@@ -121,8 +176,8 @@ def diagnose_clip(path: str, cfg: Optional[QCConfig] = None,
     if fatal_framing and cfg.early_exit:
         rep.verdict = Verdict.REJECT.value
         rep.stages_skipped += ["shot_cuts", "camera_motion", "texture", "blur"]
-        rep.suggested_route, rep.route_rationale = labels.suggest(
-            view_class, CameraMotion.UNKNOWN.value, "unknown", duration_ok)
+        rep.suggested_route, rep.route_rationale = _route(
+            cfg, view_class, CameraMotion.UNKNOWN.value, "unknown", duration_ok)
         return rep
 
     # ---------------- stage 2: shot cuts ----------------
@@ -193,8 +248,8 @@ def diagnose_clip(path: str, cfg: Optional[QCConfig] = None,
         rep.add_reason("blurry")
 
     # ---------------- verdict ----------------
-    rep.suggested_route, rep.route_rationale = labels.suggest(
-        view_class, rep.camera_motion, rep.bg_texture, duration_ok)
+    rep.suggested_route, rep.route_rationale = _route(
+        cfg, view_class, rep.camera_motion, rep.bg_texture, duration_ok)
 
     fatal = {"no_stable_hands", "no_person", "cuts_too_short", "decode_error"}
     if fatal & set(rep.reasons):

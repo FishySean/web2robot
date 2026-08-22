@@ -20,6 +20,7 @@
 | 原始视频素材 | `data/` |
 | 机器人 MJCF / mesh | `assets/robots/<机器人名>/`（`m7`、`l3_4`） |
 | 机器人参数（关节限位 / 静息姿态 / 碰撞盒与门槛） | `configs/robots/<机器人名>.yaml` —— **一台机器人一个文件，代码里不留第二份**；每组带 `verified` 说明是不是实测标定的 |
+| 想跳过质检/路由（公司自己有一套） | `--quality_gate skip` / `--routing skip`，取值集合只写在 `src/web2robot/quality/config.py` 的 `GATE_MODES` / `ROUTING_MODES`；默认 `builtin` = 行为不变 |
 | 绝对路径、checkpoint 位置 | `configs/paths.yaml` —— **全工程唯一允许写绝对路径的文件** |
 | 我们对第三方仓库改了什么 | `external/patches/README.md` |
 | 某个决定当时为什么那么定 | `docs/` + 各模块 `__init__.py` 的文档字符串 |
@@ -36,7 +37,10 @@ web2robot/
 │   ├── paths.py                 路径解析总入口（P.weights() / P.check_output_dir()）
 │   ├── common/                  跨环节共用（video_io：解码抽帧）
 │   ├── quality/     ══════ ①取景质检     拍全了没 / 稳不稳 / 背景合不合适
+│   │                            `python -m web2robot.quality --quality_gate skip` 整档跳过
+│   │                            （2026-08-21：公司已有质检体系，这一档降级为可选）
 │   ├── routing/     ══════ ②视角与运动分类  第一或第三人称、相机动不动 → 选技术路线
+│   │                            `--routing skip` 只关路由，质检信号照样全跑
 │   ├── perception/  ══════ ③感知前端
 │   │   ├── hawor.py             相机运动的片段走这条（SLAM，深度准，条件不满足整段失败）
 │   │   ├── wilor.py + moge.py   相机固定的片段走这条（逐帧，从不崩溃，深度差 → 见 §3）
@@ -74,7 +78,7 @@ web2robot/
 │   └── dev/                     开发期工具：check_* 回归比对、render_*/viz_* 出片、
 │                                 build_l3_4_assets.py（从厂家原包生成 L3.4 资产）
 │
-├── tests/                   ← stdlib unittest，秒级，344/344
+├── tests/                   ← stdlib unittest，秒级，365/365
 │   └── regression/              回归基准片段 + 期望判决（qc.jsonl / contact_sheet.png）
 │
 ├── configs/

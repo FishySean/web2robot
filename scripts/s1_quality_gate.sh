@@ -7,6 +7,11 @@
 #
 #   scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --viz outputs/ev/
 #   scripts/s1_quality_gate.sh --help
+#
+# 想整档跳过（2026-08-21：公司已有质检体系，这两步降级为可选）：
+#   scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --quality_gate skip
+#   scripts/s1_quality_gate.sh data/videos/ --out outputs/qc.jsonl --routing skip
+# 默认 builtin = 行为不变。skip 档不加载任何模型，判决写 skipped（不是 accept）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec env PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \

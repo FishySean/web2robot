@@ -71,6 +71,11 @@ M7 人形机器人）的关节角轨迹 —— 可以直接当模仿学习的训
 | ④重定向 | 手轨迹 → 关节角 | 根位姿两条路线（flow-matching 生成 / 网格搜索）+ 逆运动学 | [`retarget/`](src/web2robot/retarget/) |
 | ⑤碰撞/轨迹 | 关节角 → 干净的关节角 | 代理几何 + 有符号距离梯度下降；坏帧检测与填补 | [`collision/`](src/web2robot/collision/) [`trajectory/`](src/web2robot/trajectory/) |
 
+①②**不是强制的**：公司内部已经有现成的质检评估体系，2026-08-21 起这两步降级为
+可选 —— `--quality_gate skip` / `--routing skip` 整档跳过（默认 `builtin` 行为不变，
+skip 档不加载任何模型，判决写 `skipped` 而不是 `accept`，因为没量过的东西不能算通过）。
+现有实现保留，它是这套流水线技术完整性的一部分。
+
 ---
 
 ## 各环节在做什么

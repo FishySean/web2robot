@@ -93,8 +93,22 @@
 
 ## B. 等人拍板，我不该自己决定
 
-（暂时空着。B2「默认 `--root_solver` 选哪条」2026-08-21 拍了 `grid`，已落地 ——
-上游 argparse 默认值 + patch 重导 + README ④ + `docs/VERIFICATION.md` 一节。）
+（B2「默认 `--root_solver` 选哪条」2026-08-21 拍了 `grid`，已落地 —— 上游 argparse
+默认值 + patch 重导 + README ④ + `docs/VERIFICATION.md` 一节。编号不复用。
+注意这里的 B 编号和碰撞过滤那套 B0–B4 是两套东西，别串。）
+
+下面六条是 **2026-08-21 方向调整**（从"打磨 demo"转向"批量产出 LeRobot v3.0 数据集"）
+交下来的四个任务在实现过程中撞出来的矛盾。按用户自己的规矩「发现新依赖或矛盾先记录同步，
+不要自己假设一个答案接着往下做」记在这里，**没有一条我自己拍了**。
+
+| # | 撞到什么 | 为什么我不该自己定 | 我建议的答案 |
+|---|---|---|---|
+| B3 | **任务B（视觉合成）没有输入画面。** `data/clips_official/` 那 15 段官方片段里一帧 RGB 都没有：每段只有 `depth.mp4` `mask.mp4` `hand_joints.bin` `object_pose.bin` 这些，`camera.json` 只有内参（853×480）。`find` 过整个 `data/clips_official/` 加 upstream 的 examples，`*.mp4` 一共只有 15 个 `depth.mp4` + 10 个 `mask.mp4` | "把人的手臂抠掉、贴上渲染的机器人"这件事的输入是 RGB。没有 RGB 就不是"精度不够"，是这一步跑不起来。而我手上唯一有 RGB 的素材是 `data/videos/` 那 10 段抓取视频和自采的 `ours_*` —— 后者被"demo 只用官方片段"的规矩排除了 | 从 HF 那个官方片段库拉带 RGB 的原始片段（106 段那批，md5 可以和现有的对上）。要是 HF 上也没有 RGB，那就得张勃给公司内部 exo 视频批次的位置 |
+| B4 | **视觉合成不是并行支线，它在格式对齐的关键路径上。** 参考数据集 `train/roll_the_towels/shard-0000-of-0001/meta/info.json` 里三路特征 `observation.images.cam_high` / `cam_left_wrist` / `cam_right_wrist` 都是 `dtype: video`、`[3,480,640]`、h264/yuv420p。我们现在一路画面都产不出 | 任务清单把"格式对齐"列为关键路径、"视觉合成"列为可并行。但对齐到那份 schema 就必须有三路视频，两件事其实是一件。这是排期假设错了，不是实现细节 | 第一版数据集先只交 `observation.state` / `action`（LeRobot 允许特征子集），把三路视频列成第二版；或者反过来把任务B提到和任务A同级。要张勃点头，因为这决定第一批数据能不能直接进训练 |
+| B5 | **动作维度和帧率都对不上。** 参考数据集是 `robot_type: "yam_bimanual"`、`fps: 30`、`action`/`observation.state` 都是 `float32[14]`（`left_joint_1..6` + `left_gripper` ×2）。我们的 `trajectory.npz` 是 M7：`q_left/q_right` 各 (T,7) + `q_left_fingers/q_right_fingers` 各 (T,12) = **38 维**，`fps` 是 **15.401786**（浮点，不是整数） | 38→14 要么丢掉手指、要么换 robot_type 和特征命名；15.4→30 要重采样，那会动 `trajectory.npz` 的时间轴。两件都不是格式转换，是**改数据本身**，而且一旦发出去就是别人训练用的口径 | 新增一个 `robot_type: "m7_bimanual_dex"`，`action` 写 38 维、名字直接用 `trajectory.npz` 里的 `*_joint_names`（已经是全称），fps 字段写实测的 15.4 并在 `info.json` 里注明不重采样。要张勃确认公司训练侧能不能吃非 30 fps、非 14 维 |
+| B6 | **任务C（MPC）缺前向模型，"误差降到阈值以内"会自指。** `refine/attach.py` 现在用刚连假设（物体跟手刚性连接）算物体位姿，`refine/modes.py::mpc_solve` 的 `NotImplementedError` 里写明了两个缺口：没有带物体的仿真 rollout、论文没给采样时域/样本数/代价权重 | 如果目标位姿和"仿真结果"都出自同一个刚连假设，那局部搜索一定能把误差压到 0，而画面里的物体不会有任何改变 —— 这种验收数字是假的。要么承认它是运动学层面的平滑（有用，但不能叫"物体位姿跟踪误差达标"），要么把物体网格搬进 MuJoCo（卡 C2：缺网格 + 缺米制深度） | 先做运动学 MPC，产物和文档里**明写"非物理，只是在参考轨迹附近做带约束的局部平滑"**，四宫格对比照做；物理 rollout 挂在 C2 后面。要张勃认这个降级，否则验收标准要改 |
+| B7 | **"G1 已接入完成"和仓库现状不符。** upstream 有 `external/EgoInfinity/retarget/sim/robots/g1/`（config/env/sample_config）和官方权重 `/mnt/vlm/fanshaoheng/EgoInfinity/retarget/ckpts/g1.pt`，但我们仓库里没有 G1 的 MJCF、没有 hand_frame 约定、没有碰撞覆盖，`configs/robots/` 只有 `m7.yaml` 和 `l3_4.yaml` | 任务3要"批量转成 M7 和 G1 两种格式"。按 M7 的经验，接一台新机器人真正花时间的是 hand_frame 约定（M7 那次转错手掌）和自碰撞标定，不是跑通。说"已接入"可能指的是 upstream 那套官方 G1，两种理解的工作量差一个数量级 | 先只用 upstream 官方那套 G1 + 官方 ckpt 批量出数据（不做我们的碰撞过滤，产物里标明"未做自碰撞审计"）；要不要按 M7 的路子补一遍 hand_frame + 标定，另开一件事 |
+| B8 | **批量的"现有 exo 视频"在哪。** 本地只有 `data/videos/` 10 段抓取的 exo（去重后 7 段）和 15 段官方 ego 片段，都是 demo 规模。HF 那 106 段是 ego，不是 exo | 任务3的输入规模决定要不要写并行调度、要不要断点续跑、要不要按 shard 切分 —— 这些是架构决定，规模差两个数量级就是两套写法 | 要张勃给出：这批 exo 视频在哪个路径/哪个内部库、大概多少段、有没有已经切好的片段边界 |
 
 ## C. 有意推后的欠账
 
@@ -123,6 +137,7 @@
 | C19 | 新增两层坏帧粒度的三个阈值是**惯例，不是实测** | `trajectory/tiers.py` 里 `z_thresh=3.5`（Iglewicz–Hoaglin 论文的建议值）、`frac_thresh=0.05`（"5% 帧离群才算整段有问题"）、`seg_sec=2.0`（轨迹段长度）—— 都是拿约定值起的头，没在我们的素材上扫过。做法：拿 HF 那 106 段官方片段跑一遍，人工标"这段镜头是不是真的乱"，看这三个数在什么组合下和人工判断吻合。注意判据是**只警告/只标记**，所以误报的代价比漏报低，别照抄论文的剔除口径来定阈值 |
 | C20 | episode 级只能做 clip **内部**的离群，跨语料的做不了 | EgoSmith 原文（arXiv 2607.09701 §3）是在整个语料上算相机平移分布再丢离群 episode；我们的 pipeline 一次只见一个 clip，所以 `episode_camera_check` 判的是"这段片子内部有没有几对帧的机位运动格外大"。真正的跨语料离群该在质检阶段做（C14 那一摊，`quality/` 已经有 `_camera_motion_score_flow` 的分数，缺的是把整批分数存下来再回头比）。同一条：原文那个"硬旋转阈值丢掉头部大幅转动的 episode"我们**没有对应物** —— clip 契约里没有逐帧相机位姿（`camera.json` 只有内参 + 重力），光流也分不开平移和旋转，所以警告文案只能把 §V2/§V3 一起引 |
 | C21 | L3.4 一个碰撞参数都没标定过 | `configs/robots/l3_4.yaml` **刻意没有 `collision:` 一节**（`tests/test_robot_params_yaml.py::TestL34HasNoCollisionSection` 把这条"故意不写"钉住了，免得有人把一份 `verified: false` 的复制品读成"L3.4 也支持"）。现在那套过滤器是 M7 专用的：代理盒挂 `waist_pitch_link`、body 名写死 `left/right_hand_frame`。等真要支持 L3.4，加 yaml 那一节的同时必须连标定一起加 |
+| C22 | `--quality_gate external` / `--routing external` 第三档 | 2026-08-21 明确**先不加**：现在没有对接对象，不知道公司那套质检输出什么格式的判决，先留一个名字会有人去实现它。开关的取值集合只写在 `src/web2robot/quality/config.py` 的 `GATE_MODES` / `ROUTING_MODES` 两个常量里，加档就改那一处（argparse 的 choices 和单测都引用它，`tests/test_quality_switch.py::test_no_external_mode_yet` 把"现在只有两档"钉住了，加档时会红，那是提醒不是故障）。接的时候要想清楚的是：`external` 读进来的判决要映射到 `Verdict` 的哪一档，以及它给不给 `suggested_route` |
 
 ## D. 不是技术活，但会忘
 
