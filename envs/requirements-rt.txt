@@ -111,6 +111,10 @@ propcache==0.5.2
 protobuf==7.35.1
 psutil==7.2.2
 py-cpuinfo==9.0.0
+# pyarrow: 不在 2026-08-06 的 freeze 里，2026-08-22 经用户批准后追加
+# （LeRobot v3.0 导出必须写 parquet；`pip install --no-deps` 装入 rt_env，
+#   freeze 前后 diff 只多这一行，numpy 仍是 2.2.6 —— 见 docs/BACKLOG.md B10）
+pyarrow==25.0.1
 pydantic==2.13.4
 pydantic_core==2.46.4
 pydub==0.25.1

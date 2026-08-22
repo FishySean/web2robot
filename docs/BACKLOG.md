@@ -97,23 +97,31 @@
 默认值 + patch 重导 + README ④ + `docs/VERIFICATION.md` 一节。编号不复用。
 注意这里的 B 编号和碰撞过滤那套 B0–B4 是两套东西，别串。）
 
-下面九条是 **2026-08-21 方向调整**（从"打磨 demo"转向"批量产出 LeRobot v3.0 数据集"）
-交下来的四个任务在实现过程中撞出来的矛盾。按用户自己的规矩「发现新依赖或矛盾先记录同步，
-不要自己假设一个答案接着往下做」记在这里，**没有一条我自己拍了**。
-（B9–B11 是 2026-08-22 做任务A 的差距分析时新撞出来的，明细在
-[`LEROBOT_ALIGNMENT_GAP.md`](LEROBOT_ALIGNMENT_GAP.md)。）
+下面九条（B3–B11）是 **2026-08-21 方向调整**（从"打磨 demo"转向"批量产出 LeRobot v3.0
+数据集"）交下来的四个任务在实现过程中撞出来的矛盾。按用户自己的规矩「发现新依赖或矛盾先
+记录同步，不要自己假设一个答案接着往下做」记在这里，**当时没有一条是我自己拍的**。
 
-| # | 撞到什么 | 为什么我不该自己定 | 我建议的答案 |
+> **2026-08-22：九条全部拍板，这一节的待决队列现在是空的。** 下表只留"当时撞到什么 +
+> 用户定了什么 + 落到哪"。B4/B5/B9/B10/B11 的实测明细在
+> [`LEROBOT_ALIGNMENT_GAP.md`](LEROBOT_ALIGNMENT_GAP.md) §6，搁置的三条（B6/B7/B8）
+> 转成 C 节的欠账。编号退役，不复用。
+>
+> **拍板时用户重申的唯一目标**（比任何单条决定都重要）：现在不是要产出大规模数据集，
+> 也不是要把格式做到跟公司标准完全吻合；唯一要做的是把**"原始视频 → 视觉合成 →
+> 产出带画面的数据"这条链路，在 M7 一台机器人、少量官方示例视频上完整跑通**。
+> 格式细节允许临时占位，**不要因为格式不确定就卡住不推进**。
+
+| # | 当时撞到什么 | 用户 2026-08-22 定的 | 落到哪 / 还欠什么 |
 |---|---|---|---|
-| B3 | **任务B（视觉合成）没有输入画面。** `data/clips_official/` 那 15 段官方片段里一帧 RGB 都没有：每段只有 `depth.mp4` `mask.mp4` `hand_joints.bin` `object_pose.bin` 这些，`camera.json` 只有内参（853×480）。`find` 过整个 `data/clips_official/` 加 upstream 的 examples，`*.mp4` 一共只有 15 个 `depth.mp4` + 10 个 `mask.mp4` | "把人的手臂抠掉、贴上渲染的机器人"这件事的输入是 RGB。没有 RGB 就不是"精度不够"，是这一步跑不起来。而我手上唯一有 RGB 的素材是 `data/videos/` 那 10 段抓取视频和自采的 `ours_*` —— 后者被"demo 只用官方片段"的规矩排除了 | 从 HF 那个官方片段库拉带 RGB 的原始片段（106 段那批，md5 可以和现有的对上）。要是 HF 上也没有 RGB，那就得张勃给公司内部 exo 视频批次的位置 |
-| B4 | **视觉合成不是并行支线，它在格式对齐的关键路径上。** 参考数据集 `train/roll_the_towels/shard-0000-of-0001/meta/info.json` 里三路特征 `observation.images.cam_high` / `cam_left_wrist` / `cam_right_wrist` 都是 `dtype: video`、`[3,480,640]`、h264/yuv420p。我们现在一路画面都产不出 | 任务清单把"格式对齐"列为关键路径、"视觉合成"列为可并行。但对齐到那份 schema 就必须有三路视频，两件事其实是一件。这是排期假设错了，不是实现细节 | 第一版数据集先只交 `observation.state` / `action`（LeRobot 允许特征子集），把三路视频列成第二版；或者反过来把任务B提到和任务A同级。要张勃点头，因为这决定第一批数据能不能直接进训练 |
-| B5 | **动作维度和帧率都对不上。** 参考数据集是 `robot_type: "yam_bimanual"`、`fps: 30`、`action`/`observation.state` 都是 `float32[14]`（`left_joint_1..6` + `left_gripper` ×2）。我们的 `trajectory.npz` 是 M7：`q_left/q_right` 各 (T,7) + `q_left_fingers/q_right_fingers` 各 (T,12) = **38 维**，`fps` 是 **15.401786**（浮点，不是整数） | 38→14 要么丢掉手指、要么换 robot_type 和特征命名；15.4→30 要重采样，那会动 `trajectory.npz` 的时间轴。两件都不是格式转换，是**改数据本身**，而且一旦发出去就是别人训练用的口径 | 新增一个 `robot_type: "m7_bimanual_dex"`，`action` 写 38 维、名字直接用 `trajectory.npz` 里的 `*_joint_names`（已经是全称），fps 字段写实测的 15.4 并在 `info.json` 里注明不重采样。要张勃确认公司训练侧能不能吃非 30 fps、非 14 维 |
-| B6 | **任务C（MPC）缺前向模型，"误差降到阈值以内"会自指。** `refine/attach.py` 现在用刚连假设（物体跟手刚性连接）算物体位姿，`refine/modes.py::mpc_solve` 的 `NotImplementedError` 里写明了两个缺口：没有带物体的仿真 rollout、论文没给采样时域/样本数/代价权重 | 如果目标位姿和"仿真结果"都出自同一个刚连假设，那局部搜索一定能把误差压到 0，而画面里的物体不会有任何改变 —— 这种验收数字是假的。要么承认它是运动学层面的平滑（有用，但不能叫"物体位姿跟踪误差达标"），要么把物体网格搬进 MuJoCo（卡 C2：缺网格 + 缺米制深度） | 先做运动学 MPC，产物和文档里**明写"非物理，只是在参考轨迹附近做带约束的局部平滑"**，四宫格对比照做；物理 rollout 挂在 C2 后面。要张勃认这个降级，否则验收标准要改 |
-| B7 | **"G1 已接入完成"和仓库现状不符。** upstream 有 `external/EgoInfinity/retarget/sim/robots/g1/`（config/env/sample_config）和官方权重 `/mnt/vlm/fanshaoheng/EgoInfinity/retarget/ckpts/g1.pt`，但我们仓库里没有 G1 的 MJCF、没有 hand_frame 约定、没有碰撞覆盖，`configs/robots/` 只有 `m7.yaml` 和 `l3_4.yaml` | 任务3要"批量转成 M7 和 G1 两种格式"。按 M7 的经验，接一台新机器人真正花时间的是 hand_frame 约定（M7 那次转错手掌）和自碰撞标定，不是跑通。说"已接入"可能指的是 upstream 那套官方 G1，两种理解的工作量差一个数量级 | 先只用 upstream 官方那套 G1 + 官方 ckpt 批量出数据（不做我们的碰撞过滤，产物里标明"未做自碰撞审计"）；要不要按 M7 的路子补一遍 hand_frame + 标定，另开一件事 |
-| B8 | **批量的"现有 exo 视频"在哪。** 本地只有 `data/videos/` 10 段抓取的 exo（去重后 7 段）和 15 段官方 ego 片段，都是 demo 规模。HF 那 106 段是 ego，不是 exo | 任务3的输入规模决定要不要写并行调度、要不要断点续跑、要不要按 shard 切分 —— 这些是架构决定，规模差两个数量级就是两套写法 | 要张勃给出：这批 exo 视频在哪个路径/哪个内部库、大概多少段、有没有已经切好的片段边界 |
-| B9 | **fps 不只是"不是 30"，是逐段都不一样。** 实测 10 段官方片段的 `scene.json.fps`：15.0000 / 15.0468 / 15.0778 / 15.1442 / 15.1927 / 15.4018 / 15.4762 / **18.4041** / 15.0000 / 15.0000。而 `info.json` 里 `fps` 是**整个数据集一个数**，`timestamp` 在参考里严格等距（实测间隔 0.03333334 = 1/30） | B5 只记了"15.4 不是 30"，当时以为是一个固定值。现在是三条路各有代价：① 全部重采样到统一 fps —— 改的是数据本身，插值会改关节角；② 按 fps 分 shard —— 10 段能分出 8 个 shard，等于没有数据集；③ 写一个名义 fps 并接受 `timestamp` 和真实时间偏差（18.4 那段 8 秒会偏 1.8 秒）。选哪条决定下游读到的时间轴是真的还是名义的 | 倾向 ③ 但把真实 fps 逐 episode 写进 episodes parquet 的自定义列（参考自己就加了 `dense_subtask_*` 这种非标准列），`info.json` 的 `fps` 写名义值并注明。要张勃确认训练侧读不读 `timestamp` |
-| B10 | **没有任何 env 装了 `pyarrow`，写 parquet 缺依赖。** `rt_env` / `hawor_env` / `perception_env` 三个全试过都是 `ModuleNotFoundError`；系统 `/usr/bin/python3` 有 `pyarrow 24.0.0`（这次的分析就是拿它读的） | 规矩是"共享机器，不要 pip install"（`CONVENTIONS.md`）。而导出 LeRobot v3.0 必须写 parquet，绕不开。用系统 python 读分析没问题，但**导出流程不该依赖一个不在 `envs/requirements-*.txt` 里的解释器** | 往 `envs/requirements-rt.txt` 加 `pyarrow`，由人执行安装（我不动共享 env）；或者给导出单独建第四个 env。前者省事，但会改动一个 31 个测试都在用的环境，所以要人点头 |
-| B11 | **我们产的 mp4 是 mpeg4，参考格式要求 h264，而且这违反我们自己的约定 §3。** 实测 `input_viz.mp4` / `robot_sim.mp4` 都是 `codec_name=mpeg4`；源头是上游 `retarget/utils/viz.py::write_video` 里的 `cv2.VideoWriter_fourcc(*"mp4v")`。`CONVENTIONS.md` 第 3 条写的是"视频一律 h264 / yuv420p" | 改它要动 `external/patches/egoinfinity-modified.patch`（唯一允许改上游的通道），而 `docs/VERIFICATION.md` 里有一条参照线正是 `robot_sim.mp4 = 205d96dba4a701e4be19a88ff1ec0483` —— 换编码器这个 md5 必然变，那条基线要重新立。这不是我能顺手改的 | 导出模块自己用 `-c:v libx264` 生成要发布的视频（不碰上游的调试用产物），上游那两个 mp4 留在 mpeg4 并在约定里注明例外；或者一次性换掉并重立基线。前者不动既有基线 |
+| B3 | 15 段官方片段里**一帧 RGB 都没有**（只有 `depth.mp4` / `mask.mp4` / `hand_joints.bin` / `object_pose.bin`），视觉合成没有输入 | **用片段文件名里的 YouTube 视频 ID + 起止秒数，直接下载原始视频截取对应片段。** 这不是我们额外发明的流程 —— EgoInfinity 官方 pipeline 本身的标准输入就是"从视频抽出的 RGB 帧"。先走这条路，不用绕道问张勃要内部 exo 批次的位置 | **当前主线**：实现"ID+起止时间→下载→截取→抽帧"，并在 15 段官方片段上验证下载的 RGB 与 `hand_joints.bin` 等在**时间轴上对得上**（`depth.mp4`/`mask.mp4` 帧数正好等于 `n_frames`，是现成的对齐真值） |
+| B4 | 视觉合成其实在格式对齐的关键路径上，不是可并行支线 | **确认：最终发布的数据集必须包含画面。** 所以视觉合成是必须的一环、优先级高，不是可选项 | 排期串成 B3 → 视觉合成 → 带画面的导出，不再当两条并行线 |
+| B5 | 38 维 vs 参考的 `float32[14]`、fps 15.4 vs 30 —— 改哪边都是改数据本身 | **临时占位方案，先跟通链路**：`robot_type` 用真实维度的临时名（如 `m7_bimanual_dex`）、`action`/`observation.state` 直接写 38 维、字段名用现有 `*_joint_names`（已是全称，不改）、fps 写名义值。**整套明确标注为临时占位**，等张勃正式格式规范文档到了再调 | [`LEROBOT_ALIGNMENT_GAP.md`](LEROBOT_ALIGNMENT_GAP.md) §6；导出模块本身还没写 |
+| B6 | 任务C（MPC）缺前向模型，"误差降到阈值以内"会自指 | **继续暂停，任务C 整体搁置**；这期间**不要做"运动学层面的伪 MPC"这类自证方案** | 转 C1（那条加了 2026-08-22 的注） |
+| B7 | "G1 已接入完成"和仓库现状不符，两种理解的工作量差一个数量级 | **G1 完全搁置，不投入任何精力** —— 包括我提的"先用官方 G1 + 官方 ckpt 批量出数据、不做我们的碰撞过滤"这个折中方案**也不要做**。现阶段只做 M7 一条线 | 转 C23 |
+| B8 | 批量的"现有 exo 视频"在哪；规模差两个数量级就是两套写法 | **现在不做批量转换**，不需要去确认公司内部 exo 语料库的位置 | 转 C24 |
+| B9 | fps 不只是"不是 30"，是逐段都不一样（15.0000 / 15.0468 / … / **18.4041**） | **方案③**：`info.json` 写一个名义 fps，每段真实 fps 进 episodes parquet 的自定义列（先例是参考自己的 `dense_subtask_*`）。**不做重采样、不按 fps 分 shard** | [`LEROBOT_ALIGNMENT_GAP.md`](LEROBOT_ALIGNMENT_GAP.md) §6 |
+| B10 | 三个 env 都没装 `pyarrow`，而规矩是"共享机器不要 pip install" | **批准安装**，加进 `envs/requirements-rt.txt`，并**破例授权我自己执行这次安装** | **已做完**：`pyarrow==25.0.1` 装入 `rt_env`（`pip install --no-deps`，freeze 前后 diff 只多这一行，numpy 仍 2.2.6），requirements 已加，365 个测试全绿；`external/patches/_pre_migration_snapshot/README.md` 那条 8/06 的 md5 加了脚注（`e8f9e2f7…` → `841a67ed…`，历史存档值不改） |
+| B11 | 我们产的 mp4 是 mpeg4，参考要 h264，还违反我方约定 §3；换编码器会让 `robot_sim.mp4 = 205d96db…` 这条基线失效 | **现在不改**：只有真正要打包发布的数据才用 `libx264` 转 h264；现有调试产物（`robot_sim.mp4` 等）保持 mpeg4 原样，`docs/VERIFICATION.md` 里已建立的验收基准一条都不动 | 转码放在导出模块自己做；上游 `retarget/utils/viz.py::write_video` 不碰 |
 
 ## C. 有意推后的欠账
 
@@ -121,7 +129,7 @@
 
 | # | 事 | 怎么续 / 卡在哪 |
 |---|---|---|
-| C1 | `refine/` 真正的修复算法 | 现在只做到**诊断判断**；Replay 实现了，MPC / RL 是占位，调用直接 `NotImplementedError`（不静默降级是故意的） |
+| C1 | `refine/` 真正的修复算法 | 现在只做到**诊断判断**；Replay 实现了，MPC / RL 是占位，调用直接 `NotImplementedError`（不静默降级是故意的）。**2026-08-22：用户明确任务C 整体搁置（原 B6），而且这期间不要做"运动学层面的伪 MPC"这类自证方案** —— 那样的验收数字出自和目标同一个刚连假设，必然达标而画面里什么都没变。要续的前置还是 C2（物体网格 + 米制深度） |
 | C2 | `twin/` 的 SAM2 + FoundationPose 后端 | 只有 `official` 那条能跑；卡在缺物体网格 + 缺米制深度 |
 | C3 | `hand_conf.bin (T,2)` 加进 clip 契约 | 是 Phantom 遮挡关节合并的前置条件 |
 | C4 | Ego2Robot 0.65 臂展项的 ablation | 目标函数改动，之前明确划在校准任务范围外 |
@@ -143,6 +151,8 @@
 | C20 | episode 级只能做 clip **内部**的离群，跨语料的做不了 | EgoSmith 原文（arXiv 2607.09701 §3）是在整个语料上算相机平移分布再丢离群 episode；我们的 pipeline 一次只见一个 clip，所以 `episode_camera_check` 判的是"这段片子内部有没有几对帧的机位运动格外大"。真正的跨语料离群该在质检阶段做（C14 那一摊，`quality/` 已经有 `_camera_motion_score_flow` 的分数，缺的是把整批分数存下来再回头比）。同一条：原文那个"硬旋转阈值丢掉头部大幅转动的 episode"我们**没有对应物** —— clip 契约里没有逐帧相机位姿（`camera.json` 只有内参 + 重力），光流也分不开平移和旋转，所以警告文案只能把 §V2/§V3 一起引 |
 | C21 | L3.4 一个碰撞参数都没标定过 | `configs/robots/l3_4.yaml` **刻意没有 `collision:` 一节**（`tests/test_robot_params_yaml.py::TestL34HasNoCollisionSection` 把这条"故意不写"钉住了，免得有人把一份 `verified: false` 的复制品读成"L3.4 也支持"）。现在那套过滤器是 M7 专用的：代理盒挂 `waist_pitch_link`、body 名写死 `left/right_hand_frame`。等真要支持 L3.4，加 yaml 那一节的同时必须连标定一起加 |
 | C22 | `--quality_gate external` / `--routing external` 第三档 | 2026-08-21 明确**先不加**：现在没有对接对象，不知道公司那套质检输出什么格式的判决，先留一个名字会有人去实现它。开关的取值集合只写在 `src/web2robot/quality/config.py` 的 `GATE_MODES` / `ROUTING_MODES` 两个常量里，加档就改那一处（argparse 的 choices 和单测都引用它，`tests/test_quality_switch.py::test_no_external_mode_yet` 把"现在只有两档"钉住了，加档时会红，那是提醒不是故障）。接的时候要想清楚的是：`external` 读进来的判决要映射到 `Verdict` 的哪一档，以及它给不给 `suggested_route` |
+| C23 | G1 接入（原 B7） | **2026-08-22 用户明确：G1 完全搁置，不投入任何精力**，连"先用 upstream 官方 G1 + 官方 ckpt 出数据、不做我们的碰撞过滤"这个折中也不做。现阶段只做 M7 一条线。要续的话素材是现成的：upstream `external/EgoInfinity/retarget/sim/robots/g1/`（config/env/sample_config）+ 官方权重 `/mnt/vlm/fanshaoheng/EgoInfinity/retarget/ckpts/g1.pt`；我们缺的是 MJCF、`hand_frame` 约定（M7 那次就是这里转错手掌，见 memory `m7-handframe-convention`）、碰撞覆盖和 `configs/robots/g1.yaml`。按 M7 的经验，真正花时间的是 hand_frame + 自碰撞标定，不是跑通 |
+| C24 | 批量转换公司 exo 语料（原 B8） | **2026-08-22 用户明确：现在不做批量转换**，也不需要去确认内部语料库在哪。所以并行调度 / 断点续跑 / 按 shard 切分这些架构决定一并推后 —— 规模没定之前写哪套都是猜。现在的范围就是"少量官方示例片段"（`data/clips_official/` 15 段 + HF 那 106 段可扩） |
 
 ## D. 不是技术活，但会忘
 
