@@ -242,6 +242,7 @@ web2robot/
 | [`docs/SYNC_2026-08-07.md`](SYNC_2026-08-07.md) | 阶段性同步记录 |
 | [`docs/VIDEO_SELECTION_GUIDE.md`](VIDEO_SELECTION_GUIDE.md) | **"什么样的视频能用"的唯一真源**：准入判据 §V1–§V4（连续性 / 人体位置 / 人体朝向 / 切镜拆段）+ 模型分配 §0.1 + HaWoR 硬性前提 §0.0。**编号是接口** —— 质检/路由的代码注释直接引用 `§V1`、`§0.1`、`B3` 这些号，改判据能 grep 出所有该跟着改的地方，所以别重排编号 |
 | [`docs/RELATED_WORK_2026-08-11.md`](RELATED_WORK_2026-08-11.md) | 四篇相关工作逐条对照（Ego2Robot / Phantom / Do as I Do / HandUMI）+ ICLR 定位结论 + 由此产生的待办。**写论文和定优先级时看** |
+| [`docs/LEROBOT_ALIGNMENT_GAP.md`](LEROBOT_ALIGNMENT_GAP.md) | 现有 `trajectory.npz` 对齐到 LeRobot v3.0 的**差距分析**（2026-08-22，任务A）。目标格式逐字段实测、我们缺什么/多什么、要动的代码范围。**只是分析，没有转换代码** —— 参考数据集在 `/mnt/vlm/common/datasets/ABC-130k_lerobot_v30_repair_filter_qf094`（不在仓库里），复现命令附在文末 |
 | `envs/requirements-{rt,hawor,perception}.txt` | 三个环境的精确版本。**共享机器，不要 pip install** |
 
 ---

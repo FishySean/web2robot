@@ -97,9 +97,11 @@
 默认值 + patch 重导 + README ④ + `docs/VERIFICATION.md` 一节。编号不复用。
 注意这里的 B 编号和碰撞过滤那套 B0–B4 是两套东西，别串。）
 
-下面六条是 **2026-08-21 方向调整**（从"打磨 demo"转向"批量产出 LeRobot v3.0 数据集"）
+下面九条是 **2026-08-21 方向调整**（从"打磨 demo"转向"批量产出 LeRobot v3.0 数据集"）
 交下来的四个任务在实现过程中撞出来的矛盾。按用户自己的规矩「发现新依赖或矛盾先记录同步，
 不要自己假设一个答案接着往下做」记在这里，**没有一条我自己拍了**。
+（B9–B11 是 2026-08-22 做任务A 的差距分析时新撞出来的，明细在
+[`LEROBOT_ALIGNMENT_GAP.md`](LEROBOT_ALIGNMENT_GAP.md)。）
 
 | # | 撞到什么 | 为什么我不该自己定 | 我建议的答案 |
 |---|---|---|---|
@@ -109,6 +111,9 @@
 | B6 | **任务C（MPC）缺前向模型，"误差降到阈值以内"会自指。** `refine/attach.py` 现在用刚连假设（物体跟手刚性连接）算物体位姿，`refine/modes.py::mpc_solve` 的 `NotImplementedError` 里写明了两个缺口：没有带物体的仿真 rollout、论文没给采样时域/样本数/代价权重 | 如果目标位姿和"仿真结果"都出自同一个刚连假设，那局部搜索一定能把误差压到 0，而画面里的物体不会有任何改变 —— 这种验收数字是假的。要么承认它是运动学层面的平滑（有用，但不能叫"物体位姿跟踪误差达标"），要么把物体网格搬进 MuJoCo（卡 C2：缺网格 + 缺米制深度） | 先做运动学 MPC，产物和文档里**明写"非物理，只是在参考轨迹附近做带约束的局部平滑"**，四宫格对比照做；物理 rollout 挂在 C2 后面。要张勃认这个降级，否则验收标准要改 |
 | B7 | **"G1 已接入完成"和仓库现状不符。** upstream 有 `external/EgoInfinity/retarget/sim/robots/g1/`（config/env/sample_config）和官方权重 `/mnt/vlm/fanshaoheng/EgoInfinity/retarget/ckpts/g1.pt`，但我们仓库里没有 G1 的 MJCF、没有 hand_frame 约定、没有碰撞覆盖，`configs/robots/` 只有 `m7.yaml` 和 `l3_4.yaml` | 任务3要"批量转成 M7 和 G1 两种格式"。按 M7 的经验，接一台新机器人真正花时间的是 hand_frame 约定（M7 那次转错手掌）和自碰撞标定，不是跑通。说"已接入"可能指的是 upstream 那套官方 G1，两种理解的工作量差一个数量级 | 先只用 upstream 官方那套 G1 + 官方 ckpt 批量出数据（不做我们的碰撞过滤，产物里标明"未做自碰撞审计"）；要不要按 M7 的路子补一遍 hand_frame + 标定，另开一件事 |
 | B8 | **批量的"现有 exo 视频"在哪。** 本地只有 `data/videos/` 10 段抓取的 exo（去重后 7 段）和 15 段官方 ego 片段，都是 demo 规模。HF 那 106 段是 ego，不是 exo | 任务3的输入规模决定要不要写并行调度、要不要断点续跑、要不要按 shard 切分 —— 这些是架构决定，规模差两个数量级就是两套写法 | 要张勃给出：这批 exo 视频在哪个路径/哪个内部库、大概多少段、有没有已经切好的片段边界 |
+| B9 | **fps 不只是"不是 30"，是逐段都不一样。** 实测 10 段官方片段的 `scene.json.fps`：15.0000 / 15.0468 / 15.0778 / 15.1442 / 15.1927 / 15.4018 / 15.4762 / **18.4041** / 15.0000 / 15.0000。而 `info.json` 里 `fps` 是**整个数据集一个数**，`timestamp` 在参考里严格等距（实测间隔 0.03333334 = 1/30） | B5 只记了"15.4 不是 30"，当时以为是一个固定值。现在是三条路各有代价：① 全部重采样到统一 fps —— 改的是数据本身，插值会改关节角；② 按 fps 分 shard —— 10 段能分出 8 个 shard，等于没有数据集；③ 写一个名义 fps 并接受 `timestamp` 和真实时间偏差（18.4 那段 8 秒会偏 1.8 秒）。选哪条决定下游读到的时间轴是真的还是名义的 | 倾向 ③ 但把真实 fps 逐 episode 写进 episodes parquet 的自定义列（参考自己就加了 `dense_subtask_*` 这种非标准列），`info.json` 的 `fps` 写名义值并注明。要张勃确认训练侧读不读 `timestamp` |
+| B10 | **没有任何 env 装了 `pyarrow`，写 parquet 缺依赖。** `rt_env` / `hawor_env` / `perception_env` 三个全试过都是 `ModuleNotFoundError`；系统 `/usr/bin/python3` 有 `pyarrow 24.0.0`（这次的分析就是拿它读的） | 规矩是"共享机器，不要 pip install"（`CONVENTIONS.md`）。而导出 LeRobot v3.0 必须写 parquet，绕不开。用系统 python 读分析没问题，但**导出流程不该依赖一个不在 `envs/requirements-*.txt` 里的解释器** | 往 `envs/requirements-rt.txt` 加 `pyarrow`，由人执行安装（我不动共享 env）；或者给导出单独建第四个 env。前者省事，但会改动一个 31 个测试都在用的环境，所以要人点头 |
+| B11 | **我们产的 mp4 是 mpeg4，参考格式要求 h264，而且这违反我们自己的约定 §3。** 实测 `input_viz.mp4` / `robot_sim.mp4` 都是 `codec_name=mpeg4`；源头是上游 `retarget/utils/viz.py::write_video` 里的 `cv2.VideoWriter_fourcc(*"mp4v")`。`CONVENTIONS.md` 第 3 条写的是"视频一律 h264 / yuv420p" | 改它要动 `external/patches/egoinfinity-modified.patch`（唯一允许改上游的通道），而 `docs/VERIFICATION.md` 里有一条参照线正是 `robot_sim.mp4 = 205d96dba4a701e4be19a88ff1ec0483` —— 换编码器这个 md5 必然变，那条基线要重新立。这不是我能顺手改的 | 导出模块自己用 `-c:v libx264` 生成要发布的视频（不碰上游的调试用产物），上游那两个 mp4 留在 mpeg4 并在约定里注明例外；或者一次性换掉并重立基线。前者不动既有基线 |
 
 ## C. 有意推后的欠账
 
